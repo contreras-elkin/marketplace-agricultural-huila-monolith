@@ -1,0 +1,31 @@
+server:
+  port: 8080
+
+spring:
+  application:
+    name: marketplace
+
+  datasource:
+    url: jdbc:postgresql://localhost:5432/marketplace
+    username: marketplace
+    password: marketplace
+
+  jpa:
+    hibernate:
+      ddl-auto: validate
+    open-in-view: false
+
+  flyway:
+    schemas: auth,catalog,chat,transactions,notifications
+    default-schema: public
+    create-schemas: false
+    locations:
+      - classpath:db/migration/auth
+      - classpath:db/migration/catalog
+      - classpath:db/migration/chat
+      - classpath:db/migration/transactions
+      - classpath:db/migration/notifications
+
+app:
+  cors:
+    allowed-origin: http://localhost:5173
