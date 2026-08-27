@@ -22,23 +22,23 @@
 
 **Criterio de salida:** ✅ cumplido — `docker compose up -d` levanta Postgres+RabbitMQ, el backend arranca y corre las 5 migraciones desde cero (verificado con `docker compose down -v` + restart), `/health` responde 200, y el frontend lo muestra en pantalla.
 
-## Épica 1 — Auth/Usuarios (RF1, RF2)
+## Épica 1 — Auth/Usuarios (RF1, RF2) ✅ Completada
 
 Todo lo demás depende de poder identificar quién es productor y quién comprador.
 
-**Backend:**
-1. Registro: nombre, correo, contraseña (bcrypt), rol — único e inmutable tras crearse.
-2. Login: valida credenciales, emite JWT.
-3. Perfil de finca del productor: departamento, municipio, vereda, nombre de finca.
-4. `AuthModuleApi`: expone lo mínimo que otros módulos necesitan (ej. `getUserSummary(userId)`, `isProducer(userId)`) — nada más.
+**Backend** (nace el paquete `auth/`):
+1. ✅ Registro: nombre, correo, contraseña (bcrypt vía `PasswordEncoder`), rol — único e inmutable tras crearse. Email único (409 si ya existe).
+2. ✅ Login: valida credenciales, emite JWT. Se usó Spring Security OAuth2 Resource Server (Nimbus, HS256 con clave simétrica en `app.jwt.secret`) en vez de una librería JWT manual (ej. jjwt) — el filtro esqueleto `JwtAuthenticationFilter` de Épica 0 se eliminó porque el propio Resource Server ya resuelve el parseo/validación del Bearer token.
+3. ✅ Perfil de finca del productor: departamento, municipio, vereda, nombre de finca (`PUT`/`GET /api/auth/farm-profile`, protegido con `@PreAuthorize("hasRole('PRODUCER')")` a partir del claim `role` del JWT).
+4. ✅ `AuthModuleApi`: expone `getUserSummary(userId)` e `isProducer(userId)`.
 
 **Frontend:**
-1. Formulario de registro (con selección de rol) y login.
-2. Almacenamiento del JWT en el cliente y su envío automático en llamadas siguientes (define aquí la estrategia — ej. memoria + refresh, o storage — porque el resto de pantallas la reutiliza).
-3. Formulario de perfil de finca para el productor.
-4. Ruteo básico protegido (redirige a login si no hay sesión).
+1. ✅ Formulario de registro (con selección de rol) y login (`pages/RegisterPage.tsx`, `pages/LoginPage.tsx`).
+2. ✅ JWT guardado en memoria (estado de React vía `auth/AuthContext.tsx`) y enviado automáticamente en llamadas siguientes — se pierde la sesión al recargar la página; queda pendiente evaluar persistencia (localStorage o refresh token) más adelante si hace falta.
+3. ✅ Formulario de perfil de finca para el productor (`pages/FarmProfilePage.tsx`).
+4. ✅ Ruteo protegido con `react-router-dom` (`components/ProtectedRoute.tsx`) — redirige a `/login` sin sesión, y fuera de `/farm-profile` si el rol no es productor.
 
-**Criterio de salida:** un productor y un comprador se registran e inician sesión desde la UI real, el JWT viaja correctamente en las siguientes llamadas, y el productor completa su perfil de finca.
+**Criterio de salida:** ✅ cumplido — verificado end-to-end en navegador real: un productor se registra, inicia sesión, el JWT viaja en las llamadas siguientes (incluido CORS con credenciales entre `5173`→`8080`), y completa su perfil de finca; un comprador se registra/inicia sesión y no puede acceder a `/farm-profile` (403 backend, redirect en frontend).
 
 ## Épica 2 — Catálogo (RF3, RF4)
 

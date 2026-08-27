@@ -25,14 +25,19 @@ marketplace-agricultural-huila-monolith/
 │       ├── main/resources/{application.yml, db/migration/<modulo>/}
 │       └── test/java/com/huila/marketplace/ArchitectureTests.java
 └── frontend/                   # React + Vite + TypeScript
-    ├── package.json
+    ├── package.json             # incluye react-router-dom desde Épica 1
     ├── .env / .env.example     # VITE_API_BASE_URL
     ├── index.html
     └── src/
-        ├── main.tsx
-        ├── App.tsx             # hoy: pantalla de estado que llama a /health
-        └── api/client.ts       # wrapper fetch, sin Axios todavía
+        ├── main.tsx             # BrowserRouter + AuthProvider envolviendo <App/>
+        ├── App.tsx              # define <Routes>; Home muestra /health + estado de sesión
+        ├── api/client.ts        # wrapper fetch (apiGet/apiPost/apiPut, token opcional), ApiError
+        ├── auth/                # AuthContext (JWT en memoria — se pierde al recargar, ver §5), api.ts (llamadas a /api/auth/*), types.ts
+        ├── components/          # ProtectedRoute (redirige a /login sin sesión o sin el rol pedido)
+        └── pages/                # RegisterPage, LoginPage, FarmProfilePage — cada épica suma las suyas acá
 ```
+
+**Convención de frontend por módulo (desde Épica 1):** cada épica agrega sus propias `pages/` y, si expone datos reutilizables, funciones en un `<modulo>/api.ts` — no hay una carpeta `features/` ni Redux/estado global más allá de `AuthContext`. Las llamadas autenticadas usan `apiGet/apiPost/apiPut(path, body?, auth.token)`; `ProtectedRoute` acepta un `role` opcional para restringir por rol, igual que `@PreAuthorize` en el backend.
 
 Dentro de `backend/`, un solo proyecto Maven (no multi-módulo — evita la complejidad de múltiples `pom.xml` sin aportar nada en fase 1). Separación por **paquete por módulo**, y dentro de cada módulo, 4 capas simples (convención Spring típica, no hexagonal):
 
@@ -40,16 +45,17 @@ Dentro de `backend/`, un solo proyecto Maven (no multi-módulo — evita la comp
 backend/src/main/java/com/huila/marketplace/
 ├── MarketplaceApplication.java
 ├── shared/                     # kernel transversal — SIN lógica de negocio
-│   ├── config/                 # beans comunes, CORS, OpenAPI
-│   ├── security/                # filtro JWT, contexto de usuario autenticado
+│   ├── config/                 # beans comunes (CorsConfigurationSource, OpenAPI)
+│   ├── security/                # SecurityConfig: JWT (encoder/decoder/converter), PasswordEncoder
 │   └── web/                    # manejador global de excepciones, formato de error estándar
 │
 ├── auth/
 │   ├── AuthModuleApi.java      # ← única puerta de entrada pública del módulo
-│   ├── domain/                 # User, Role (entidades JPA)
-│   ├── application/            # casos de uso (RegisterUser, Login, UpdateFarmProfile)
-│   ├── infrastructure/         # repos JPA, schema `auth`
-│   └── web/                    # controllers REST, DTOs
+│   ├── Role.java, UserSummary.java   # tipos públicos que expone la API
+│   ├── domain/                 # User, FarmProfile (entidades JPA)
+│   ├── application/            # RegisterUserService, LoginService, FarmProfileService, AuthModuleApiImpl
+│   ├── infrastructure/         # UserRepository, FarmProfileRepository — schema `auth`
+│   └── web/                    # AuthController, FarmProfileController, DTOs
 │
 ├── catalog/
 │   ├── CatalogModuleApi.java
@@ -79,13 +85,11 @@ backend/src/main/java/com/huila/marketplace/
     └── web/                    # REST para listar notificaciones del usuario
 ```
 
-> **Estado real (post Épica 0):** por ahora solo `shared/` existe con contenido (`config/CorsConfig`, `security/{SecurityConfig, JwtAuthenticationFilter}`, `web/{GlobalExceptionHandler, ApiError, HealthController}`). Los paquetes `auth/`, `catalog/`, `chat/`, `transactions/`, `notifications/` de arriba son el diseño objetivo — nacen recién con su primera clase real en la épica que les corresponde (Épica 1 crea `auth/`, etc.), no como carpetas vacías de antemano.
+> **Estado real (post Épica 1):** `shared/` (`config/CorsConfig`, `security/SecurityConfig`, `web/{GlobalExceptionHandler, ApiError, HealthController}`) y `auth/` (completo, ver árbol arriba) tienen contenido real, con la estructura de 4 capas exactamente como se diseñó. `catalog/`, `chat/`, `transactions/`, `notifications/` siguen siendo el diseño objetivo — nacen con su primera clase real en la épica que les corresponde.
 
-**Regla de visibilidad:** todo es `package-private` por defecto dentro de `domain/`, `application/` e `infrastructure/`. Solo son públicos:
-- `XModuleApi` (la fachada que otros módulos pueden invocar),
-- las clases bajo `web/` (el framework las necesita públicas, pero ningún otro módulo debe importarlas).
+**Regla de visibilidad:** el objetivo es que solo `XModuleApi` (y los tipos que expone, ej. `UserSummary`) sean el contrato público de un módulo para el resto del monolito. En la práctica, `domain/`, `application/`, `infrastructure/` y `web/` son 4 paquetes Java distintos dentro de cada módulo (sin `module-info.java`, classpath plano), así que sus clases deben ser `public` para que Spring pueda inyectarlas entre capas del mismo módulo — Java no ofrece un nivel de visibilidad "público solo dentro de mi módulo". Por eso el aislamiento real entre módulos **no lo da el modificador `public`/paquete-privado**, sino `ArchitectureTests` (`spring-modulith-starter-test`): Modulith trata el paquete raíz de cada módulo (`auth`, `catalog`, ...) como su API y sus subpaquetes (`domain`, `application`, `infrastructure`, `web`) como internos, y falla la build si otro módulo importa algo de ahí directamente. La disciplina de "solo importar `XModuleApi`" sigue siendo la convención a seguir al escribir código nuevo — el test solo la hace cumplir.
 
-**Verificación automática:** ya está activa — `spring-modulith-starter-test` + `backend/src/test/java/com/huila/marketplace/ArchitectureTests.java` con `ApplicationModules.of(MarketplaceApplication.class).verify()`. Con un solo módulo (`shared`) hoy pasa trivialmente; empieza a hacer cumplir la regla dura apenas exista un segundo módulo con contenido (Épica 1).
+**Verificación automática:** `spring-modulith-starter-test` + `backend/src/test/java/com/huila/marketplace/ArchitectureTests.java` con `ApplicationModules.of(MarketplaceApplication.class).verify()`. Desde que `auth` existe (Épica 1) ya hace cumplir la regla dura entre módulos con contenido real; corre en `mvn test`.
 
 ## 3. Comunicación entre módulos
 
@@ -151,7 +155,20 @@ Ej.: la próxima migración de `auth` es `V102__...sql`, no `V2__...sql` (ese ra
 
 **Nota de dependencia (Spring Boot 4):** a partir de Boot 4 la autoconfiguración de Flyway se movió a un artefacto propio, `org.springframework.boot:spring-boot-flyway` — no alcanza con tener `flyway-core` en el classpath como en Boot 3.x. Ya está declarado en `backend/pom.xml`.
 
-## 5. Qué NO se implementa en fase 1
+## 5. Autenticación, autorización y manejo de errores (desde Épica 1)
+
+**JWT:** el propio monolito emite y valida sus tokens — no hay IdP externo. Se usa Spring Security **OAuth2 Resource Server** (Nimbus) con clave **simétrica HS256** (`app.jwt.secret`, mínimo 256 bits; en `application.yml` con override por `JWT_SECRET`). Claims: `sub` (userId, UUID), `role` (`PRODUCER`/`BUYER`), `name`, `iss`, `iat`, `exp` (`app.jwt.expiration-minutes`, hoy 60). El decoder/encoder/`JwtAuthenticationConverter` (mapea el claim `role` a la authority `ROLE_<role>`) viven como beans en `shared/security/SecurityConfig`.
+
+**Convención para módulos nuevos** (repetible tal cual desde `catalog` en adelante):
+- Endpoint público → agregarlo a la lista `permitAll()` en `SecurityConfig`; todo lo demás requiere JWT válido por defecto (`anyRequest().authenticated()`).
+- Obtener el usuario autenticado en un controller → `@AuthenticationPrincipal Jwt jwt` y `UUID.fromString(jwt.getSubject())`. No hace falta llamar a `AuthModuleApi` solo para saber quién es el usuario logueado — el JWT ya lo trae firmado.
+- Restringir un endpoint por rol → `@PreAuthorize("hasRole('PRODUCER')")` (requiere `@EnableMethodSecurity`, ya activo en `SecurityConfig`) usando el rol del propio JWT, no una consulta a `auth`. `AuthModuleApi.isProducer(userId)`/`getUserSummary(userId)` quedan para cuando otro módulo necesita datos del usuario más allá de lo que el token ya trae (ej. mostrar el nombre del productor en un producto).
+
+**CORS:** vive en `shared/config/CorsConfig` como un bean `CorsConfigurationSource` (no un `WebMvcConfigurer`) porque la cadena de Spring Security intercepta la request antes que Spring MVC — con endpoints protegidos, el preflight `OPTIONS` y el CORS real deben resolverse dentro de esa cadena (`http.cors(...)`), que busca ese tipo de bean.
+
+**Errores:** `shared/web/GlobalExceptionHandler` es el único lugar donde se traducen excepciones a `ApiError`. Para nuevo código de dominio: lanzar `org.springframework.web.server.ResponseStatusException` con el `HttpStatus` que corresponda (ej. `CONFLICT` en duplicados, `NOT_FOUND`) — no se creó una jerarquía de excepciones de negocio propia, para no sobre-diseñar. Los `@Valid` + anotaciones de Bean Validation en los DTOs de `web/` ya devuelven 400 automáticamente. `AccessDeniedException` (de `@PreAuthorize`) ya está mapeada a 403.
+
+## 6. Qué NO se implementa en fase 1
 
 Coherente con el PDR (tabla "cuándo no usar cada patrón") y con no complicar la base:
 
@@ -162,6 +179,6 @@ Coherente con el PDR (tabla "cuándo no usar cada patrón") y con no complicar l
 - Sin API Gateway — el propio Spring Boot expone los endpoints; el Gateway aparece en la extracción.
 - Sin Outbox Pattern — los eventos en proceso ya son parte de la misma transacción de BD (no hay riesgo de "guardé pero no publiqué" como sí lo hay entre procesos distintos).
 
-## 6. Camino de extracción (referencia futura)
+## 7. Camino de extracción (referencia futura)
 
 Cuando un módulo esté listo para salir: (1) su `ModuleApi` se convierte en cliente REST, (2) sus eventos se externalizan a RabbitMQ, (3) su schema se mueve a una BD propia, (4) se despliega aparte y el Gateway le enruta tráfico (Strangler Fig, ver `market-agri-docs/05-architecture/pattern-guide.md`). Orden sugerido de extracción: Chat primero (stack y modelo de datos más distintos — Go/Mongo), luego Notificaciones (ya es asíncrono), luego el resto según carga real observada.
