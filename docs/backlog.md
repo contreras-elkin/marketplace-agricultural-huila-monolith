@@ -64,23 +64,34 @@ Depende de Auth para saber quién publica.
 
 **Criterio de salida:** ✅ cumplido — verificado end-to-end en navegador real y con pruebas de API: un productor crea/edita/agota/elimina sus productos desde la UI; un visitante sin cuenta navega y filtra el catálogo de todos los productores por categoría y municipio y abre el detalle de un producto. `mvn test` (ArchitectureTests) verde: `catalog` respeta los límites de módulo, dependiendo solo de `auth.AuthModuleApi`.
 
-## Épica 3 — Chat (RF5, RF6)
+## Épica 3 — Chat (RF5, RF6) ✅ Completada
 
 Depende de Auth (identidad) y Catálogo (de qué producto se habla y quién es el productor).
 
-**Backend:**
-1. Abrir conversación asociada a un producto entre comprador y productor (usa `CatalogModuleApi` para validar producto/productor).
-2. Mensajería en tiempo real vía WebSocket.
-3. Historial de mensajes por conversación (REST).
-4. Registrar el acuerdo de forma de compra dentro del chat: "por plataforma" o "por fuera" (un campo/estado simple en la conversación; no automatiza nada, solo registra la elección de las partes).
-5. `ChatModuleApi`: expone lo que `transactions` necesitará (ej. `getAgreedPurchase(conversationId)`).
+**Backend** (nace el paquete `chat/`):
+1. ✅ Abrir conversación asociada a un producto entre comprador y productor. `POST /api/chat/conversations` (`hasRole('BUYER')`, `buyerId` del JWT), valida el producto y saca el `producerId` vía `CatalogModuleApi.getProductSummary`. Única por `(product_id, buyer_id)` (constraint), idempotente (201 al crear / 200 si ya existía).
+2. ✅ Mensajería en tiempo real vía WebSocket **STOMP** (`spring-boot-starter-websocket`, broker simple en memoria). Handshake `/ws`; JWT en el header `Authorization` del frame `CONNECT`, validado por un `ChannelInterceptor` que reusa el `JwtDecoder` de `shared`; `SUBSCRIBE`/`SEND` a `/…/conversations/{id}` exigen ser participante. Envío en `SEND /app/conversations/{id}/messages`, fan-out por `/topic/conversations/{id}`.
+3. ✅ Historial de mensajes por conversación: `GET /api/chat/conversations/{id}/messages` (solo lectura, orden `sent_at` asc, sin paginación). Detalle `GET /api/chat/conversations/{id}` y lista `GET /api/chat/conversations` (buyer o producer, con nombres resueltos vía `auth`/`catalog`).
+4. ✅ Forma de compra: `AgreedPurchaseMethod {PLATFORM, OFF_PLATFORM}` (null = sin acordar), `PUT /api/chat/conversations/{id}/purchase-method`, cualquiera de las dos partes, last-write-wins, sin máquina de estados.
+5. ✅ `ChatModuleApi.getAgreedPurchase(conversationId)` → `AgreedPurchase(conversationId, productId, buyerId, producerId, method)` (404 si no existe). Evento `NuevoMensajeChat` publicado al persistir cada mensaje (sin listener hasta Épica 5).
 
 **Frontend:**
-1. Botón "chatear" desde el detalle de producto que abre/crea la conversación.
-2. Ventana de chat con conexión WebSocket real (mensajes en vivo, no polling) — es el punto donde más vale la pena validar temprano: reconexión, cómo viaja el JWT en el handshake, orden de mensajes.
-3. Selector de forma de compra ("por plataforma" / "por fuera") dentro del chat.
+1. ✅ Botón "Chatear" en `ProductDetailPage` (activo para `BUYER`, producto `ACTIVE` y ajeno) → `POST` y navega a `/chat/:id`.
+2. ✅ `ConversationPage` (`/chat/:conversationId`) con WebSocket real (`@stomp/stompjs`): mensajes en vivo, reconexión automática con recarga del historial por REST, orden por `sent_at`. Persistencia del JWT en `localStorage` resuelta en esta épica (deuda de Épica 1).
+3. ✅ Selector de forma de compra dentro del chat. `ConversationsPage` (`/chat`) lista "Mis conversaciones" (entry point del productor).
 
-**Criterio de salida:** comprador y productor chatean en tiempo real desde la UI sobre un producto y dejan registrada la forma de compra elegida.
+**Criterio de salida:** ✅ cumplido — verificado end-to-end en navegador real (2 sesiones) y con pruebas de API: el comprador abre el chat desde el detalle del producto, comprador y productor intercambian mensajes en vivo sin recargar, la conversación se reusa al reabrirla, un tercer usuario recibe 403, y la forma de compra elegida persiste y se ve en ambos lados. `mvn test` (ArchitectureTests) verde: `chat` respeta los límites, dependiendo solo de `auth.AuthModuleApi` y `catalog.CatalogModuleApi`.
+
+**Decisiones tomadas (ver `docs/claude/epica-3-spec.md` §"Decisiones tomadas"):**
+- **Transporte:** STOMP + broker simple en memoria (no RabbitMQ como relay — eso es post-extracción). Descartado WebSocket nativo (ruteo/serialización/sesiones a mano).
+- **JWT en el WebSocket:** header `Authorization: Bearer` en el frame `CONNECT`, validado con un `ChannelInterceptor` que reusa el `JwtDecoder` de `SecurityConfig`. `/ws/**` va en `permitAll()` (el handshake no lleva token). Nunca en query param.
+- **Persistencia del JWT (frontend):** `localStorage`, rehidratando por decodificación del payload del token (sin verificar firma; se descarta si venció). Descartado *refresh token* (sobre-ingeniería para fase 1). Un 401 en llamada autenticada dispara `auth:expired` → logout.
+- **Unicidad:** una conversación por `(product_id, buyer_id)` (constraint `UNIQUE`); solo el comprador la inicia, el productor responde.
+- **Modelo de datos (`V302`):** `conversations` + `messages`, `*_id` como UUID sueltos (sin FK cross-schema), sin paginación en el historial. `AgreedPurchaseMethod` y `NuevoMensajeChat` viven en el paquete raíz `chat`.
+- **`ChatModuleApi` mínimo:** `AgreedPurchase` solo lleva ids + `method`; `transactions` re-consulta precio/cantidad a `catalog` (no se congelan al acordar).
+- **Evento `NuevoMensajeChat`:** se publica ya, dentro de la transacción de `postMessage`, aunque Épica 5 aún no tenga listener.
+- **Autorización:** toda operación sobre una conversación (REST y WS) exige que el usuario sea el `buyerId` o el `producerId`. `SOLD_OUT` no bloquea el chat en el backend (gating solo de UI). El envío de mensajes es solo por WS.
+- Se sumó a `shared`: `/ws/**` en el `permitAll()` de `SecurityConfig`. Dependencia nueva en `backend/pom.xml`: `spring-boot-starter-websocket`. Frontend: `@stomp/stompjs`, `wsUrl()` en `api/client.ts`.
 
 ## Épica 4 — Transacciones (RF7, RF8)
 

@@ -5,7 +5,7 @@
 > si algo aquí contradice el código, gana el código y hay que corregir este archivo.
 > Para el *porqué* de cada decisión, ver [`backlog.md`](../backlog.md) y [`architecture.md`](../architecture.md).
 >
-> **Última actualización:** 2026-08-31 · **Épica en curso:** 3 — Chat (sin código todavía)
+> **Última actualización:** 2026-09-01 · **Épica en curso:** 4 — Transacciones (sin código todavía)
 
 ## Progreso por épica
 
@@ -13,16 +13,16 @@
 |---|---|---|
 | 0 — Scaffold | ✅ completa | commiteada |
 | 1 — Auth/Usuarios (RF1, RF2) | ✅ completa, verificada end-to-end | commiteada (`f34c0a7`) |
-| 2 — Catálogo (RF3, RF4) | ✅ completa, verificada end-to-end | **sin commitear (working tree)** |
-| 3 — Chat (RF5, RF6) | ⬅️ siguiente — sin código | — |
-| 4 — Transacciones (RF7, RF8) | pendiente | — |
+| 2 — Catálogo (RF3, RF4) | ✅ completa, verificada end-to-end | commiteada (`144eb6e`) |
+| 3 — Chat (RF5, RF6) | ✅ completa, verificada end-to-end | **sin commitear (working tree)** |
+| 4 — Transacciones (RF7, RF8) | ⬅️ siguiente — sin código | — |
 | 5 — Notificaciones (RF9) | pendiente | — |
 
-⚠️ **`git log` HEAD = `f34c0a7` (solo Auth).** Toda la Épica 2 está en el working tree sin
-commitear: módulo `catalog/` completo, `shared/config/MediaResourceConfig.java`,
-`db/migration/catalog/V202__…sql`, páginas de frontend de catálogo, y cambios en
-`SecurityConfig`, `GlobalExceptionHandler`, `application.yml`, `App.tsx`, `api/client.ts`,
-`.gitignore`. Nada perdido — pendiente de commit por épica.
+⚠️ **Toda la Épica 3 está en el working tree sin commitear:** módulo `chat/` completo,
+`db/migration/chat/V302__create_chat_tables.sql`, `chat/{api,types,ws}.ts` y páginas de chat
+en el frontend, y cambios en `pom.xml` (dependencia `spring-boot-starter-websocket`),
+`SecurityConfig` (`/ws/**` en `permitAll`), `AuthContext.tsx`, `api/client.ts`, `App.tsx`,
+`ProductDetailPage.tsx`, `frontend/package.json`. Pendiente de commit por épica.
 
 ## Stack y layout
 
@@ -42,10 +42,12 @@ commitear: módulo `catalog/` completo, `shared/config/MediaResourceConfig.java`
 - `config/MediaResourceConfig` — `WebMvcConfigurer` que sirve `app.uploads.dir` en `/media/**`
   (fotos de producto de Épica 2).
 - `security/SecurityConfig` — Spring Security OAuth2 Resource Server, HS256 con clave simétrica
-  `app.jwt.secret`. `@EnableMethodSecurity` activo. `permitAll()` actual: preflight, `/health`,
-  `/api/auth/register`, `/api/auth/login`, `/media/**`, `GET /api/catalog/products` y
-  `GET /api/catalog/products/*` — con `GET /api/catalog/products/mine` forzado a
-  `authenticated()` **antes** del comodín. Resto: `anyRequest().authenticated()`.
+  `app.jwt.secret`. `@EnableMethodSecurity` activo. Bean `JwtDecoder` reutilizado por el chat
+  para validar el JWT del frame STOMP `CONNECT`. `permitAll()` actual: preflight, `/health`,
+  `/api/auth/register`, `/api/auth/login`, `/media/**`, `/ws/**` (handshake WebSocket del chat;
+  la auth real es el `CONNECT`), `GET /api/catalog/products` y `GET /api/catalog/products/*`
+  — con `GET /api/catalog/products/mine` forzado a `authenticated()` **antes** del comodín.
+  Resto: `anyRequest().authenticated()`.
 - `web/GlobalExceptionHandler` — único lugar que traduce excepciones a `ApiError`. Mapea:
   `ResponseStatusException`→status real, `MethodArgumentNotValidException` (`@Valid`)→400,
   `MethodArgumentTypeMismatchException` (UUID/enum mal formado)→400,
@@ -98,38 +100,94 @@ commitear: módulo `catalog/` completo, `shared/config/MediaResourceConfig.java`
 - Migración `V202__create_products_table.sql` (+ dos índices parciales: por `producer_id`
   WHERE `deleted_at IS NULL`; por `(category, municipality)` WHERE `deleted_at IS NULL AND status='ACTIVE'`).
 
-### `chat/`, `transactions/`, `notifications/`
+### `chat/` — completo (Épica 3). Consume `catalog` y `auth`; lo consumirá `transactions`.
 
-Solo `db/migration/<mod>/V{3,4,5}01__create_schema.sql` (create schema vacío). Sin código Java.
-`chat` nace en Épica 3; su primera migración de tablas es `V302` (rango reservado `V3xx`).
+- Contrato público (paquete raíz):
+  - `ChatModuleApi.getAgreedPurchase(UUID conversationId) : AgreedPurchase` — lanza
+    `ResponseStatusException` 404 si la conversación no existe.
+  - `AgreedPurchase(UUID conversationId, UUID productId, UUID buyerId, UUID producerId,
+    AgreedPurchaseMethod method)` — mínimo; `method == null` = sin acordar. `transactions`
+    (Épica 4) re-consulta precio/cantidad a `CatalogModuleApi`, no se congelan acá.
+  - `AgreedPurchaseMethod {PLATFORM, OFF_PLATFORM}`, enum `EnumType.STRING`.
+  - `NuevoMensajeChat(UUID conversationId, UUID messageId, UUID senderId, UUID recipientId)` —
+    evento de dominio; se publica al persistir cada mensaje, **sin listener** hasta Épica 5.
+- `domain/{Conversation, Message}` — id UUID en el constructor (no `@GeneratedValue`);
+  `*_id` como UUID sueltos (sin FK cross-schema); `Instant`/`TIMESTAMPTZ`. `Conversation`
+  tiene `agree()`, `hasParticipant()`, `otherParticipant()`.
+- `infrastructure/{ConversationRepository, MessageRepository}` (`JpaRepository`;
+  `findByProductIdAndBuyerId`, `findByBuyerIdOrProducerId`,
+  `findByConversationIdOrderBySentAtAsc`, `findFirstByConversationIdOrderBySentAtDesc`).
+- `application/{ConversationService, ChatModuleApiImpl}` — `ConversationService` valida el
+  producto vía `CatalogModuleApi` (nunca contra el schema de catalog); toda operación sobre
+  una conversación exige que el usuario sea el `buyerId` **o** el `producerId` (403 si no);
+  `postMessage` es `@Transactional` y publica `NuevoMensajeChat` en la misma transacción.
+  `ChatModuleApiImpl` va directo al repo, igual patrón que `CatalogModuleApiImpl`.
+- `web/`:
+  - `ChatController` (`/api/chat`) — mezcla rol y "solo las dos partes":
+    - `POST /conversations` — `hasRole('BUYER')`, body `{productId}`; valida producto vía
+      `CatalogModuleApi`; idempotente (**201** si crea, **200** si ya existía);
+      rechaza `buyer == producer` (400).
+    - `GET /conversations` — autenticado; lista donde el user es buyer o producer, con nombre
+      de la contraparte (vía `AuthModuleApi`) y del producto (vía `CatalogModuleApi`), ordenada
+      por actividad reciente.
+    - `GET /conversations/{id}` — autenticado, solo las 2 partes (403).
+    - `GET /conversations/{id}/messages` — idem; historial por `sent_at` asc, sin paginación.
+    - `PUT /conversations/{id}/purchase-method` — idem; body `{method}`; last-write-wins.
+  - `ChatMessagingController` — `@MessageMapping("/conversations/{id}/messages")`; persiste el
+    mensaje y lo reemite a `/topic/conversations/{id}`. **Único** camino para crear mensajes
+    (el REST de historial es solo lectura).
+  - `WebSocketConfig` — `@EnableWebSocketMessageBroker`; endpoint `/ws` con
+    `setAllowedOrigins(app.cors.allowed-origin)` (sin SockJS); broker simple en memoria
+    (`/topic`), prefijo de app `/app`.
+  - `StompAuthChannelInterceptor` — sobre el canal entrante: en `CONNECT` valida el header
+    `Authorization: Bearer` con el `JwtDecoder` de `shared` y fija el `Principal`; en
+    `SUBSCRIBE`/`SEND` a un destino de conversación exige ser participante. Fallo →
+    `MessagingException` (frame ERROR).
+- Migración `V302__create_chat_tables.sql` — `chat.conversations` (`UNIQUE (product_id, buyer_id)`,
+  índices por `buyer_id` y `producer_id`) + `chat.messages` (índice `(conversation_id, sent_at)`).
+
+### `transactions/`, `notifications/`
+
+Solo `db/migration/<mod>/V{4,5}01__create_schema.sql` (create schema vacío). Sin código Java.
+`transactions` nace en Épica 4; su primera migración de tablas es `V402` (rango reservado `V4xx`).
 
 ## Frontend — qué existe
 
 - `api/client.ts` — wrapper `fetch`: `apiGet/apiPost/apiPut/apiDelete` (token opcional),
   `apiUpload` (multipart, deja el `Content-Type` al browser), `mediaUrl(path)` (antepone
-  `VITE_API_BASE_URL` a rutas `/media/...`). Todas lanzan `ApiError` con `status`/`message`.
-- `auth/AuthContext.tsx` — **JWT solo en memoria (estado de React). Se pierde al recargar.**
-  Persistencia (localStorage / refresh token) deferida desde Épica 1.
-- `auth/{api.ts, types.ts}`, `catalog/{api.ts, types.ts}` (`CATEGORY_LABELS`/`UNIT_LABELS`,
-  `*_OPTIONS`; tipos `Product`, `ProductDetail`, `ProductInput`).
+  `VITE_API_BASE_URL` a rutas `/media/...`), `wsUrl(path='/ws')` (deriva `ws://…` de la base
+  HTTP). Todas lanzan `ApiError`. Un 401 en una llamada **con** token dispara el evento
+  `window` `auth:expired`.
+- `auth/AuthContext.tsx` — **JWT persistido en `localStorage`** (Épica 3). Al montar rehidrata
+  decodificando el payload del token (`sub`/`name`/`role`/`exp`; descarta si venció); escucha
+  `auth:expired` para limpiar sesión. La firma la sigue validando el backend.
+- `auth/{api.ts, types.ts}`, `catalog/{api.ts, types.ts}`, `chat/{api.ts, types.ts, ws.ts}`
+  (`ws.ts` = fábrica del `Client` STOMP con `@stomp/stompjs`: `Authorization` en `connectHeaders`,
+  `reconnectDelay: 5000`, `send()`/`close()`).
 - `components/ProtectedRoute.tsx` — redirige a `/login` sin sesión, o fuera de la ruta si el
-  `role` no coincide.
+  `role` no coincide (`role` opcional).
 - `pages/`: `RegisterPage`, `LoginPage`, `FarmProfilePage` (Épica 1); `CatalogPage`
-  (`/catalogo`, pública), `ProductDetailPage` (`/productos/:id`, pública — **tiene el botón
-  "Chatear" hoy deshabilitado, punto de entrada de Épica 3**), `MyProductsPage`
-  (`/mis-productos`, `role="PRODUCER"`), `ProductFormPage` (`/mis-productos/nuevo` y
-  `/mis-productos/:id/editar`).
-- `App.tsx` define `<Routes>`; `Home` muestra `/health`, estado de sesión y links.
-  `main.tsx` = `BrowserRouter` + `AuthProvider`. `.env`: `VITE_API_BASE_URL=http://localhost:8080`.
+  (`/catalogo`, pública), `ProductDetailPage` (`/productos/:id`, pública — **botón "Chatear"
+  activo para `BUYER` con producto `ACTIVE` y ajeno → `POST /api/chat/conversations` y navega
+  a `/chat/:id`**), `MyProductsPage` (`/mis-productos`, `role="PRODUCER"`), `ProductFormPage`;
+  `ConversationsPage` (`/chat`, `ProtectedRoute` sin `role`) y `ConversationPage`
+  (`/chat/:conversationId`, idem) — Épica 3. `ConversationPage`: carga detalle + historial por
+  REST, abre el socket, mensajes en vivo, recarga el historial al reconectar, selector de
+  forma de compra.
+- `App.tsx` define `<Routes>` (incluye `/chat` y `/chat/:conversationId`); `Home` muestra
+  `/health`, estado de sesión y links (incl. "Mis conversaciones" para cualquier sesión).
+  `main.tsx` = `BrowserRouter` + `AuthProvider`. `package.json` suma `@stomp/stompjs`.
+  `.env`: `VITE_API_BASE_URL=http://localhost:8080`.
 
 ## Datos y migraciones
 
 Postgres 16 (Docker Compose), 5 schemas, Flyway en `backend/src/main/resources/db/migration/<mod>/`.
 **Historial Flyway único combinado** → rangos reservados: `auth` V1xx · `catalog` V2xx ·
-`chat` V3xx · `transactions` V4xx · `notifications` V5xx. `create-schemas: false` (cada módulo
-crea su schema en su `V{n}01`). `spring.jpa.hibernate.ddl-auto: validate` → las entidades JPA
-nuevas deben calzar EXACTO con la migración (tipos, largo de varchar para enums, `TIMESTAMPTZ`
-para `Instant`). Multipart 5 MB. `app.uploads.dir = ./uploads` (gitignored).
+`chat` V3xx · `transactions` V4xx · `notifications` V5xx. Aplicadas hoy: `V101`–`V103`, `V201`,
+`V202`, `V301`, `V302`, `V401`, `V501`. `create-schemas: false` (cada módulo crea su schema en
+su `V{n}01`). `spring.jpa.hibernate.ddl-auto: validate` → las entidades JPA nuevas deben calzar
+EXACTO con la migración (tipos, largo de varchar para enums, `TIMESTAMPTZ` para `Instant`).
+Multipart 5 MB. `app.uploads.dir = ./uploads` (gitignored).
 
 ## Tests
 
@@ -150,12 +208,21 @@ cd frontend && npm install && npm run dev          # frontend → :5173
 
 Puertos: Postgres 5432 · RabbitMQ 5672 / 15672 · backend 8080 · frontend 5173.
 Flujo manual: registrar productor y comprador en `/register` → login → el productor publica en
-`/mis-productos` → el comprador (o visitante sin sesión) navega `/catalogo` y abre `/productos/:id`.
+`/mis-productos` → el comprador navega `/catalogo`, abre `/productos/:id`, toca **"Chatear"** y
+en `/chat/:id` intercambia mensajes en vivo con el productor (otra sesión) y fija la forma de
+compra. El productor ve la conversación en `/chat`.
 
 ## Gotchas vigentes
 
-- **JWT solo en memoria**: cualquier recarga completa de página pierde la sesión. Al probar en
-  navegador, moverse por links del SPA, no recargando.
+- **JWT en `localStorage`** (desde Épica 3): la sesión sobrevive al refresh, pero el token
+  puede estar vencido al recargar → la primera llamada da 401 → `auth:expired` limpia la
+  sesión y `ProtectedRoute` manda a `/login`.
+- **Probar el chat con 2 usuarios**: `localStorage` se comparte entre pestañas del mismo
+  origen, así que una 2da sesión pisa el token de la 1ra al recargar. Para 2 usuarios reales
+  usar 2 navegadores o perfiles distintos (o no recargar la pestaña de la 1ra sesión).
+- **Flyway out-of-order**: agregar una migración a un rango bajo (`V302`) sobre una BD que ya
+  tiene aplicadas migraciones de rangos altos (`V401`, `V501`) rompe la validación al arrancar.
+  Resetear con `docker compose down -v && docker compose up -d`.
 - `mvn spring-boot:run` forkea una JVM: matar solo el proceso Maven deja el backend escuchando
   en 8080. Matar por puerto.
 - La shell de Windows mangla acentos en `curl -d '...'`. Para payloads con tildes, usar

@@ -37,6 +37,11 @@ async function request<T>(path: string, options: RequestOptions): Promise<T> {
   });
 
   if (!response.ok) {
+    // Token vencido/ inválido en una llamada autenticada: la sesión ya no sirve.
+    // No se dispara en el 401 de "credenciales inválidas" del login (ese no lleva token).
+    if (response.status === 401 && options.token) {
+      window.dispatchEvent(new Event('auth:expired'));
+    }
     const message = await response
       .json()
       .then((body: { message?: string }) => body.message ?? response.statusText)
@@ -75,4 +80,9 @@ export function apiUpload<T>(path: string, formData: FormData, token?: string): 
 export function mediaUrl(path: string | null | undefined): string | undefined {
   if (!path) return undefined;
   return `${API_BASE_URL}${path}`;
+}
+
+/** URL del endpoint WebSocket a partir de la base HTTP del backend (`http` → `ws`, `https` → `wss`). */
+export function wsUrl(path = '/ws'): string {
+  return `${API_BASE_URL.replace(/^http/, 'ws')}${path}`;
 }

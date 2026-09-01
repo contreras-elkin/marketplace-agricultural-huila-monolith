@@ -50,6 +50,10 @@ public class SecurityConfig {
                         .requestMatchers(CorsUtils::isPreFlightRequest).permitAll()
                         .requestMatchers("/health", "/api/auth/register", "/api/auth/login").permitAll()
                         .requestMatchers("/media/**").permitAll()
+                        // Handshake WebSocket del chat (Épica 3): el token no viaja en el
+                        // upgrade HTTP sino en el frame STOMP CONNECT, que valida
+                        // StompAuthChannelInterceptor.
+                        .requestMatchers("/ws/**").permitAll()
                         // "/mine" antes que el comodín: navegar el catálogo es público,
                         // pero listar "mis productos" exige sesión de productor.
                         .requestMatchers(HttpMethod.GET, "/api/catalog/products/mine").authenticated()

@@ -4,6 +4,8 @@ import { apiGet } from './api/client';
 import { useAuth } from './auth/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CatalogPage } from './pages/CatalogPage';
+import { ConversationPage } from './pages/ConversationPage';
+import { ConversationsPage } from './pages/ConversationsPage';
 import { FarmProfilePage } from './pages/FarmProfilePage';
 import { LoginPage } from './pages/LoginPage';
 import { MyProductsPage } from './pages/MyProductsPage';
@@ -47,11 +49,16 @@ function Home() {
           <p>
             Sesión iniciada como {auth.name} ({auth.role === 'PRODUCER' ? 'Productor' : 'Comprador'})
           </p>
-          {auth.role === 'PRODUCER' && (
-            <p>
-              <Link to="/mis-productos">Mis productos</Link> · <Link to="/farm-profile">Editar perfil de finca</Link>
-            </p>
-          )}
+          <p>
+            <Link to="/chat">Mis conversaciones</Link>
+            {auth.role === 'PRODUCER' && (
+              <>
+                {' · '}
+                <Link to="/mis-productos">Mis productos</Link> ·{' '}
+                <Link to="/farm-profile">Editar perfil de finca</Link>
+              </>
+            )}
+          </p>
           <button onClick={logout}>Cerrar sesión</button>
         </div>
       ) : (
@@ -71,6 +78,22 @@ function App() {
       <Route path="/register" element={<RegisterPage />} />
       <Route path="/catalogo" element={<CatalogPage />} />
       <Route path="/productos/:id" element={<ProductDetailPage />} />
+      <Route
+        path="/chat"
+        element={
+          <ProtectedRoute>
+            <ConversationsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/chat/:conversationId"
+        element={
+          <ProtectedRoute>
+            <ConversationPage />
+          </ProtectedRoute>
+        }
+      />
       <Route
         path="/farm-profile"
         element={
