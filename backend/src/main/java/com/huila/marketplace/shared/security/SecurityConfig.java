@@ -10,6 +10,7 @@ import org.springframework.context.annotation.Configuration;
 import org.springframework.security.config.annotation.method.configuration.EnableMethodSecurity;
 import org.springframework.security.config.annotation.web.builders.HttpSecurity;
 import org.springframework.security.config.annotation.web.configurers.AbstractHttpConfigurer;
+import org.springframework.http.HttpMethod;
 import org.springframework.security.config.http.SessionCreationPolicy;
 import org.springframework.security.core.GrantedAuthority;
 import org.springframework.security.core.authority.SimpleGrantedAuthority;
@@ -28,7 +29,9 @@ import org.springframework.web.cors.CorsUtils;
  * Desde Épica 1: el monolito emite y valida sus propios JWT (HS256, clave
  * simétrica) vía Spring Security OAuth2 Resource Server — reemplaza el
  * filtro manual esqueleto de Épica 0. `/health` y los endpoints de
- * registro/login quedan públicos; todo lo demás exige un JWT válido.
+ * registro/login quedan públicos; desde Épica 2 también son públicos la
+ * navegación del catálogo (`GET /api/catalog/products[/{id}]`) y las fotos
+ * servidas en `/media/**`. Todo lo demás exige un JWT válido.
  */
 @Configuration
 @EnableMethodSecurity
@@ -46,6 +49,12 @@ public class SecurityConfig {
                 .authorizeHttpRequests(auth -> auth
                         .requestMatchers(CorsUtils::isPreFlightRequest).permitAll()
                         .requestMatchers("/health", "/api/auth/register", "/api/auth/login").permitAll()
+                        .requestMatchers("/media/**").permitAll()
+                        // "/mine" antes que el comodín: navegar el catálogo es público,
+                        // pero listar "mis productos" exige sesión de productor.
+                        .requestMatchers(HttpMethod.GET, "/api/catalog/products/mine").authenticated()
+                        .requestMatchers(HttpMethod.GET, "/api/catalog/products", "/api/catalog/products/*")
+                        .permitAll()
                         .anyRequest().authenticated())
                 .oauth2ResourceServer(oauth2 -> oauth2.jwt(jwt -> jwt.decoder(jwtDecoder())
                         .jwtAuthenticationConverter(jwtAuthenticationConverter)));

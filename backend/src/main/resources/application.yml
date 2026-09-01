@@ -5,6 +5,11 @@ spring:
   application:
     name: marketplace
 
+  servlet:
+    multipart:
+      max-file-size: 5MB
+      max-request-size: 5MB
+
   datasource:
     url: jdbc:postgresql://localhost:5432/marketplace
     username: marketplace
@@ -32,3 +37,6 @@ app:
   jwt:
     secret: ${JWT_SECRET:dev-only-secret-change-me-marketplace-huila-32bytes+}
     expiration-minutes: 60
+  uploads:
+    # Carpeta local donde catalog guarda las fotos de producto; se sirve en /media/**.
+    dir: ${UPLOADS_DIR:./uploads}

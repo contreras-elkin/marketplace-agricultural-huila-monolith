@@ -10,14 +10,15 @@ export class ApiError extends Error {
 }
 
 interface RequestOptions {
-  method: 'GET' | 'POST' | 'PUT';
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE';
   body?: unknown;
   token?: string;
 }
 
 async function request<T>(path: string, options: RequestOptions): Promise<T> {
+  const isFormData = options.body instanceof FormData;
   const headers: Record<string, string> = {};
-  if (options.body !== undefined) {
+  if (options.body !== undefined && !isFormData) {
     headers['Content-Type'] = 'application/json';
   }
   if (options.token) {
@@ -27,7 +28,12 @@ async function request<T>(path: string, options: RequestOptions): Promise<T> {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     method: options.method,
     headers,
-    body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
+    body:
+      options.body === undefined
+        ? undefined
+        : isFormData
+          ? (options.body as FormData)
+          : JSON.stringify(options.body),
   });
 
   if (!response.ok) {
@@ -54,4 +60,19 @@ export function apiPost<T>(path: string, body: unknown, token?: string): Promise
 
 export function apiPut<T>(path: string, body: unknown, token?: string): Promise<T> {
   return request<T>(path, { method: 'PUT', body, token });
+}
+
+export function apiDelete<T>(path: string, token?: string): Promise<T> {
+  return request<T>(path, { method: 'DELETE', token });
+}
+
+/** POST de multipart/form-data — el navegador arma el Content-Type con su boundary. */
+export function apiUpload<T>(path: string, formData: FormData, token?: string): Promise<T> {
+  return request<T>(path, { method: 'POST', body: formData, token });
+}
+
+/** Antepone la base del backend a una ruta de media (`/media/...`) que el API devuelve relativa. */
+export function mediaUrl(path: string | null | undefined): string | undefined {
+  if (!path) return undefined;
+  return `${API_BASE_URL}${path}`;
 }

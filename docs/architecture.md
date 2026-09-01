@@ -1,7 +1,7 @@
 # Arquitectura — Monolito Modular (Fase 1 / Strangler Fig)
 
 > Este documento define la estructura interna del monolito y cómo se comunican sus módulos.
-> Objetivo: que extraer cada módulo a su propio microservicio más adelante (según el [PDR](../../../documentacion_proyecto/PDR.md)) sea barato, sin sobre-diseñar la fase 1.
+> Objetivo: que extraer cada módulo a su propio microservicio más adelante (según el [PDR](PDR.md)) sea barato, sin sobre-diseñar la fase 1.
 
 ## 1. Principio rector
 
@@ -85,7 +85,9 @@ backend/src/main/java/com/huila/marketplace/
     └── web/                    # REST para listar notificaciones del usuario
 ```
 
-> **Estado real (post Épica 1):** `shared/` (`config/CorsConfig`, `security/SecurityConfig`, `web/{GlobalExceptionHandler, ApiError, HealthController}`) y `auth/` (completo, ver árbol arriba) tienen contenido real, con la estructura de 4 capas exactamente como se diseñó. `catalog/`, `chat/`, `transactions/`, `notifications/` siguen siendo el diseño objetivo — nacen con su primera clase real en la épica que les corresponde.
+> **Estado real (post Épica 2):** `shared/` (`config/{CorsConfig, MediaResourceConfig}`, `security/SecurityConfig`, `web/{GlobalExceptionHandler, ApiError, HealthController}`), `auth/` y `catalog/` (completos, estructura de 4 capas como se diseñó) tienen contenido real. `catalog/` expone `CatalogModuleApi` + tipos públicos (`ProductSummary`, `ProductStatus`, `ProductCategory`, `ProductUnit`) y depende de `auth.AuthModuleApi` para el nombre del productor en el detalle — dependencia permitida por Modulith (va contra la API del módulo). `chat/`, `transactions/`, `notifications/` siguen siendo el diseño objetivo — nacen con su primera clase real en la épica que les corresponde.
+>
+> **Fotos de producto (Épica 2):** subida local acotada, sin blob store. `catalog/infrastructure/PhotoStorage` escribe en `app.uploads.dir` (`./uploads`, gitignored) y `shared/config/MediaResourceConfig` las sirve como estáticos en `/media/**` (ruta en el `permitAll()` de `SecurityConfig`). Al extraer `catalog` a microservicio, `PhotoStorage` pasa a ser un cliente de blob store y la URL sigue siendo la misma abstracción.
 
 **Regla de visibilidad:** el objetivo es que solo `XModuleApi` (y los tipos que expone, ej. `UserSummary`) sean el contrato público de un módulo para el resto del monolito. En la práctica, `domain/`, `application/`, `infrastructure/` y `web/` son 4 paquetes Java distintos dentro de cada módulo (sin `module-info.java`, classpath plano), así que sus clases deben ser `public` para que Spring pueda inyectarlas entre capas del mismo módulo — Java no ofrece un nivel de visibilidad "público solo dentro de mi módulo". Por eso el aislamiento real entre módulos **no lo da el modificador `public`/paquete-privado**, sino `ArchitectureTests` (`spring-modulith-starter-test`): Modulith trata el paquete raíz de cada módulo (`auth`, `catalog`, ...) como su API y sus subpaquetes (`domain`, `application`, `infrastructure`, `web`) como internos, y falla la build si otro módulo importa algo de ahí directamente. La disciplina de "solo importar `XModuleApi`" sigue siendo la convención a seguir al escribir código nuevo — el test solo la hace cumplir.
 

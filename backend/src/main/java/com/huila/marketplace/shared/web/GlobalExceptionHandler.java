@@ -10,6 +10,8 @@ import org.springframework.security.access.AccessDeniedException;
 import org.springframework.web.bind.MethodArgumentNotValidException;
 import org.springframework.web.bind.annotation.ExceptionHandler;
 import org.springframework.web.bind.annotation.RestControllerAdvice;
+import org.springframework.web.method.annotation.MethodArgumentTypeMismatchException;
+import org.springframework.web.multipart.MaxUploadSizeExceededException;
 import org.springframework.web.server.ResponseStatusException;
 
 @RestControllerAdvice
@@ -43,6 +45,29 @@ public class GlobalExceptionHandler {
         ApiError body = new ApiError(
                 Instant.now(), HttpStatus.BAD_REQUEST.value(), "Bad Request", message, request.getRequestURI());
         return ResponseEntity.badRequest().body(body);
+    }
+
+    /** Parámetro de ruta/query con formato inválido (UUID mal formado, valor de enum inexistente). */
+    @ExceptionHandler(MethodArgumentTypeMismatchException.class)
+    public ResponseEntity<ApiError> handleTypeMismatch(
+            MethodArgumentTypeMismatchException ex, HttpServletRequest request) {
+        String message = "Valor inválido para '" + ex.getName() + "'";
+        ApiError body = new ApiError(
+                Instant.now(), HttpStatus.BAD_REQUEST.value(), "Bad Request", message, request.getRequestURI());
+        return ResponseEntity.badRequest().body(body);
+    }
+
+    @ExceptionHandler(MaxUploadSizeExceededException.class)
+    public ResponseEntity<ApiError> handleUploadTooLarge(
+            MaxUploadSizeExceededException ex, HttpServletRequest request) {
+        HttpStatus status = HttpStatus.PAYLOAD_TOO_LARGE;
+        ApiError body = new ApiError(
+                Instant.now(),
+                status.value(),
+                status.getReasonPhrase(),
+                "La imagen supera el tamaño máximo permitido",
+                request.getRequestURI());
+        return ResponseEntity.status(status).body(body);
     }
 
     @ExceptionHandler(Exception.class)

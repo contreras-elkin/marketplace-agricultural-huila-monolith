@@ -1,6 +1,6 @@
 # Backlog — Monolito Modular (Fase 1)
 
-> Ordenado por dependencia real entre módulos (ver [architecture.md](architecture.md)), no por prioridad de negocio aislada — cada épica requiere que la anterior exista para poder probarse de punta a punta. RF-x referencia los requisitos funcionales del [PDR](../../../documentacion_proyecto/PDR.md).
+> Ordenado por dependencia real entre módulos (ver [architecture.md](architecture.md)), no por prioridad de negocio aislada — cada épica requiere que la anterior exista para poder probarse de punta a punta. RF-x referencia los requisitos funcionales del [PDR](PDR.md).
 >
 > **Frontend delgado por épica:** el entregable final es el monolito corriendo *junto con* el frontend (React), así que cada épica de backend trae su propia porción mínima de frontend que consume esa API antes de pasar a la siguiente. Esto evita descubrir problemas de integración (JWT/CORS, WebSocket real, SDK de la pasarela de pago) recién al final. El panel admin en Angular queda fuera de esta secuencia (ver "Fuera de esta fase").
 
@@ -40,21 +40,29 @@ Todo lo demás depende de poder identificar quién es productor y quién comprad
 
 **Criterio de salida:** ✅ cumplido — verificado end-to-end en navegador real: un productor se registra, inicia sesión, el JWT viaja en las llamadas siguientes (incluido CORS con credenciales entre `5173`→`8080`), y completa su perfil de finca; un comprador se registra/inicia sesión y no puede acceder a `/farm-profile` (403 backend, redirect en frontend).
 
-## Épica 2 — Catálogo (RF3, RF4)
+## Épica 2 — Catálogo (RF3, RF4) ✅ Completada
 
 Depende de Auth para saber quién publica.
 
-**Backend:**
-1. CRUD de productos del productor: nombre, categoría, unidad, cantidad, precio, foto(s) (guardar como URL/ruta — sin pipeline de medios elaborado en MVP), municipio, estado activo/agotado.
-2. Listado y filtro del catálogo (comprador): por categoría y municipio.
-3. `CatalogModuleApi`: expone lo que `chat` necesitará (ej. `getProductSummary(productId)` con nombre, productor asociado, estado).
+**Backend** (nace el paquete `catalog/`):
+1. ✅ CRUD de productos del productor: nombre, categoría, unidad, cantidad, precio, foto, municipio, estado activo/agotado. Protegido con `@PreAuthorize("hasRole('PRODUCER')")` por método (el controller mezcla rutas públicas y de productor); el `producerId` sale del JWT; chequeo de propiedad en editar/eliminar/foto (403 si es de otro productor).
+2. ✅ Listado y filtro del catálogo (comprador): `GET /api/catalog/products?category=&municipality=` **público** (`permitAll()`), solo devuelve `ACTIVE`, filtro por municipio case-insensitive, armado con `JpaSpecificationExecutor`. Detalle público `GET /api/catalog/products/{id}` enriquecido con el nombre del productor vía `AuthModuleApi`.
+3. ✅ `CatalogModuleApi.getProductSummary(productId)` → `ProductSummary(id, name, producerId, status, price, unit)` — mínimo, solo lo que chat (Épica 3) y transactions (Épica 4) van a necesitar.
+
+**Decisiones tomadas (ver docs/claude/handoffs/handoff-epica-2.md §"Decisiones a resolver"):**
+- **Fotos:** upload local, **una por producto**. `POST /api/catalog/products/{id}/photo` (multipart) → guarda en `app.uploads.dir` (`./uploads`, gitignored) con nombre `UUID.ext`, whitelist JPG/PNG/WebP, límite 5 MB; se sirve como estático en `/media/**` (bean `shared/config/MediaResourceConfig`, ruta en el `permitAll()`). Descartado: campo de URL externa (mala UX) y pipeline elaborado / blob store (sobra para MVP). Al extraer catalog, se cambia `PhotoStorage` por un cliente de blob store.
+- **Catálogo sin sesión:** `GET` de listado y detalle son públicos — coherente con "catálogo = alta disponibilidad, muchas lecturas" del PDR; la identidad se exige recién al abrir el chat (Épica 3).
+- **Borrado:** lógico (`deleted_at`), filtrado en todas las queries y en `CatalogModuleApi`. Evita conversaciones/transacciones huérfanas en épicas siguientes.
+- **`category` y `unit`:** enum cerrado (`ProductCategory`, `ProductUnit` en el paquete raíz del módulo, mapeados `EnumType.STRING`). `municipality` sigue texto libre (coherente con `FarmProfile`; el form ofrece un `<datalist>` de municipios del Huila y prellena con el del perfil de finca).
+- **Estado:** `ProductStatus { ACTIVE, SOLD_OUT }`, default `ACTIVE`; `SOLD_OUT` se ve en el detalle pero no en la grilla ni habilita el chat.
+- Se sumó a `shared`: `apiDelete`/`apiUpload`/`mediaUrl` en el cliente del frontend; handlers 400 (`MethodArgumentTypeMismatchException`) y 413 (`MaxUploadSizeExceededException`) en `GlobalExceptionHandler`. Migración `V202__create_products_table.sql`.
 
 **Frontend:**
-1. Panel del productor: crear/editar/eliminar productos, marcar activo/agotado.
-2. Catálogo del comprador: grilla/listado con filtro por categoría y municipio.
-3. Vista de detalle de un producto (punto de entrada al chat en la siguiente épica).
+1. ✅ Panel del productor (`pages/MyProductsPage`, `pages/ProductFormPage`): crear/editar/eliminar, toggle activo/agotado, subir foto. Rutas `/mis-productos[...]` con `ProtectedRoute role="PRODUCER"`.
+2. ✅ Catálogo del comprador (`pages/CatalogPage`): grilla con filtro por categoría (desplegable) y municipio (texto). Ruta pública `/catalogo`.
+3. ✅ Vista de detalle (`pages/ProductDetailPage`, ruta pública `/productos/:id`) con nombre del productor y botón "Chatear" deshabilitado (placeholder de Épica 3).
 
-**Criterio de salida:** un productor gestiona sus productos desde la UI; un comprador navega y filtra el catálogo completo de todos los productores desde la UI.
+**Criterio de salida:** ✅ cumplido — verificado end-to-end en navegador real y con pruebas de API: un productor crea/edita/agota/elimina sus productos desde la UI; un visitante sin cuenta navega y filtra el catálogo de todos los productores por categoría y municipio y abre el detalle de un producto. `mvn test` (ArchitectureTests) verde: `catalog` respeta los límites de módulo, dependiendo solo de `auth.AuthModuleApi`.
 
 ## Épica 3 — Chat (RF5, RF6)
 

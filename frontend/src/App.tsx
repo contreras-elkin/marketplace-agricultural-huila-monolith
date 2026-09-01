@@ -3,8 +3,12 @@ import { Link, Route, Routes } from 'react-router-dom';
 import { apiGet } from './api/client';
 import { useAuth } from './auth/AuthContext';
 import { ProtectedRoute } from './components/ProtectedRoute';
+import { CatalogPage } from './pages/CatalogPage';
 import { FarmProfilePage } from './pages/FarmProfilePage';
 import { LoginPage } from './pages/LoginPage';
+import { MyProductsPage } from './pages/MyProductsPage';
+import { ProductDetailPage } from './pages/ProductDetailPage';
+import { ProductFormPage } from './pages/ProductFormPage';
 import { RegisterPage } from './pages/RegisterPage';
 
 interface HealthResponse {
@@ -35,12 +39,19 @@ function Home() {
         {health.phase === 'ok' && health.status}
         {health.phase === 'error' && `error (${health.message})`}
       </p>
+      <p>
+        <Link to="/catalogo">Ver catálogo</Link>
+      </p>
       {auth ? (
         <div>
           <p>
             Sesión iniciada como {auth.name} ({auth.role === 'PRODUCER' ? 'Productor' : 'Comprador'})
           </p>
-          {auth.role === 'PRODUCER' && <p><Link to="/farm-profile">Editar perfil de finca</Link></p>}
+          {auth.role === 'PRODUCER' && (
+            <p>
+              <Link to="/mis-productos">Mis productos</Link> · <Link to="/farm-profile">Editar perfil de finca</Link>
+            </p>
+          )}
           <button onClick={logout}>Cerrar sesión</button>
         </div>
       ) : (
@@ -58,11 +69,37 @@ function App() {
       <Route path="/" element={<Home />} />
       <Route path="/login" element={<LoginPage />} />
       <Route path="/register" element={<RegisterPage />} />
+      <Route path="/catalogo" element={<CatalogPage />} />
+      <Route path="/productos/:id" element={<ProductDetailPage />} />
       <Route
         path="/farm-profile"
         element={
           <ProtectedRoute role="PRODUCER">
             <FarmProfilePage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/mis-productos"
+        element={
+          <ProtectedRoute role="PRODUCER">
+            <MyProductsPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/mis-productos/nuevo"
+        element={
+          <ProtectedRoute role="PRODUCER">
+            <ProductFormPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/mis-productos/:id/editar"
+        element={
+          <ProtectedRoute role="PRODUCER">
+            <ProductFormPage />
           </ProtectedRoute>
         }
       />
