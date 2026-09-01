@@ -28,7 +28,13 @@ public class CatalogModuleApiImpl implements CatalogModuleApi {
         return productRepository
                 .findByIdAndDeletedAtIsNull(productId)
                 .map(p -> new ProductSummary(
-                        p.getId(), p.getName(), p.getProducerId(), p.getStatus(), p.getPrice(), p.getUnit()))
+                        p.getId(),
+                        p.getName(),
+                        p.getProducerId(),
+                        p.getStatus(),
+                        p.getPrice(),
+                        p.getUnit(),
+                        p.getQuantity()))
                 .orElseThrow(() -> new ResponseStatusException(HttpStatus.NOT_FOUND, "Producto no encontrado"));
     }
 }

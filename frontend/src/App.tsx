@@ -9,9 +9,11 @@ import { ConversationsPage } from './pages/ConversationsPage';
 import { FarmProfilePage } from './pages/FarmProfilePage';
 import { LoginPage } from './pages/LoginPage';
 import { MyProductsPage } from './pages/MyProductsPage';
+import { ProducerSalesPage } from './pages/ProducerSalesPage';
 import { ProductDetailPage } from './pages/ProductDetailPage';
 import { ProductFormPage } from './pages/ProductFormPage';
 import { RegisterPage } from './pages/RegisterPage';
+import { TransactionStatusPage } from './pages/TransactionStatusPage';
 
 interface HealthResponse {
   status: string;
@@ -55,6 +57,7 @@ function Home() {
               <>
                 {' · '}
                 <Link to="/mis-productos">Mis productos</Link> ·{' '}
+                <Link to="/mis-ventas">Mis ventas</Link> ·{' '}
                 <Link to="/farm-profile">Editar perfil de finca</Link>
               </>
             )}
@@ -91,6 +94,22 @@ function App() {
         element={
           <ProtectedRoute>
             <ConversationPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/transacciones/:id"
+        element={
+          <ProtectedRoute>
+            <TransactionStatusPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/mis-ventas"
+        element={
+          <ProtectedRoute role="PRODUCER">
+            <ProducerSalesPage />
           </ProtectedRoute>
         }
       />

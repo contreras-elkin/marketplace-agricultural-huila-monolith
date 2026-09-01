@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useParams } from 'react-router-dom';
+import { Link, useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { getConversation, getMessages, setPurchaseMethod } from '../chat/api';
@@ -11,10 +11,12 @@ import {
   type Message,
 } from '../chat/types';
 import { connectToConversation, type ChatSocket } from '../chat/ws';
+import { listMyTransactions, startCheckout } from '../transactions/api';
 
 export function ConversationPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
   const { auth } = useAuth();
+  const navigate = useNavigate();
 
   const [conversation, setConversation] = useState<Conversation | null>(null);
   const [messages, setMessages] = useState<Message[]>([]);
@@ -23,6 +25,7 @@ export function ConversationPage() {
   const [connected, setConnected] = useState(false);
   const [draft, setDraft] = useState('');
   const [savingMethod, setSavingMethod] = useState(false);
+  const [paying, setPaying] = useState(false);
 
   const socketRef = useRef<ChatSocket | null>(null);
   const connectedOnceRef = useRef(false);
@@ -114,6 +117,32 @@ export function ConversationPage() {
     }
   }
 
+  async function handlePay() {
+    if (!conversationId || !token) return;
+    setPaying(true);
+    setError(null);
+    try {
+      const { checkoutUrl } = await startCheckout(conversationId, token);
+      window.location.href = checkoutUrl; // se sale de la SPA hacia Stripe Checkout
+    } catch (err) {
+      // 409: ya hay una transacción en curso para esta conversación → llevar a su estado.
+      if (err instanceof ApiError && err.status === 409) {
+        try {
+          const mine = await listMyTransactions(token);
+          const existing = mine.find((t) => t.conversationId === conversationId && t.status !== 'FAILED');
+          if (existing) {
+            navigate(`/transacciones/${existing.id}`);
+            return;
+          }
+        } catch {
+          // cae al mensaje genérico de abajo
+        }
+      }
+      setError(err instanceof ApiError ? err.message : 'No se pudo iniciar el pago');
+      setPaying(false);
+    }
+  }
+
   if (!auth) return null;
   if (loading) return <p>Cargando conversación...</p>;
   if (error && !conversation) {
@@ -159,6 +188,31 @@ export function ConversationPage() {
           ))}
         </select>
       </label>
+
+      {conversation.agreedPurchaseMethod === 'PLATFORM' &&
+        (conversation.buyerId === myId ? (
+          <div
+            style={{
+              margin: '0.5rem 0',
+              padding: '0.6rem',
+              border: '1px solid #1a7f37',
+              borderRadius: 8,
+              background: '#f0fbf3',
+            }}
+          >
+            <strong>Compra por la plataforma</strong>
+            <p style={{ margin: '0.3rem 0' }}>
+              Se cobra la cantidad publicada del producto en un checkout seguro de la pasarela.
+            </p>
+            <button type="button" onClick={handlePay} disabled={paying}>
+              {paying ? 'Redirigiendo al pago...' : 'Pagar por la plataforma'}
+            </button>
+          </div>
+        ) : (
+          <p style={{ color: '#1a7f37', margin: '0.5rem 0' }}>
+            Compra por la plataforma acordada — esperando que el comprador realice el pago.
+          </p>
+        ))}
 
       {error && <p role="alert">{error}</p>}
 

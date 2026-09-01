@@ -40,3 +40,17 @@ app:
   uploads:
     # Carpeta local donde catalog guarda las fotos de producto; se sirve en /media/**.
     dir: ${UPLOADS_DIR:./uploads}
+  # Épica 4 — Transacciones. Los placeholders permiten arrancar/compilar sin cuenta Stripe;
+  # las llamadas reales (crear Checkout, verificar webhook) solo ocurren en runtime.
+  # Las claves reales NO van acá (git). Se pasan por variable de entorno o por
+  # `backend/config/application.yml` (gitignored) — ver docs/claude/estado-actual.md.
+  # Para probar: `stripe listen --forward-to localhost:8080/api/transactions/webhook/stripe`
+  # (SIN --live) e inyectar STRIPE_SECRET_KEY (sk_test_...) y STRIPE_WEBHOOK_SECRET (whsec_...).
+  stripe:
+    secret-key: ${STRIPE_SECRET_KEY:sk_test_placeholder}
+    webhook-secret: ${STRIPE_WEBHOOK_SECRET:whsec_placeholder}
+  transactions:
+    currency: COP
+    # Comisión de plataforma. 0 en fase 1 (Decisión 6); subir esta tasa no toca el schema.
+    platform-fee-rate: 0.00
+    frontend-base-url: ${TRANSACTIONS_FRONTEND_URL:http://localhost:5173}

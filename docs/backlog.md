@@ -93,22 +93,34 @@ Depende de Auth (identidad) y Catálogo (de qué producto se habla y quién es e
 - **Autorización:** toda operación sobre una conversación (REST y WS) exige que el usuario sea el `buyerId` o el `producerId`. `SOLD_OUT` no bloquea el chat en el backend (gating solo de UI). El envío de mensajes es solo por WS.
 - Se sumó a `shared`: `/ws/**` en el `permitAll()` de `SecurityConfig`. Dependencia nueva en `backend/pom.xml`: `spring-boot-starter-websocket`. Frontend: `@stomp/stompjs`, `wsUrl()` en `api/client.ts`.
 
-## Épica 4 — Transacciones (RF7, RF8)
+## Épica 4 — Transacciones (RF7, RF8) ✅ Completada
 
 Depende de Chat (de dónde sale el acuerdo de compra por plataforma) y Catálogo (precio/producto).
 
-**Backend:**
-1. Integración con pasarela de pago en modo sandbox (iniciar cobro).
-2. Ledger interno: registro de la dispersión hacia el productor.
-3. Webhook de la pasarela → confirma la transacción automáticamente.
-4. Publica el evento en proceso `TransaccionConfirmada` al confirmarse.
+**Backend** (nace el paquete `transactions/`):
+1. ✅ Integración con **Stripe (test mode)**, Checkout Session **alojada** (redirect): `POST /api/transactions` (`hasRole('BUYER')`, body `{conversationId}`) valida el acuerdo vía `ChatModuleApi.getAgreedPurchase` (existe, `method == PLATFORM` → 409, caller == buyer → 403) y el producto vía `CatalogModuleApi` (`ACTIVE` → 409, `quantity > 0`), congela `quantity`/`unit_price`/`amount` (= `price × quantity`, "se compra todo el listado"), crea `Transaction(PENDING)` y la sesión Stripe. Una transacción activa (PENDING|CONFIRMED) por conversación → 409.
+2. ✅ Ledger interno: al confirmarse, una fila `transactions.ledger_entries` (`gross`/`platform_fee`/`net`, append-only, `UNIQUE (transaction_id)`). Comisión **0 %** en fase 1 (`app.transactions.platform-fee-rate = 0.00`), estructura lista para activarla.
+3. ✅ Webhook `POST /api/transactions/webhook/stripe` (`permitAll`, firma `Stripe-Signature` verificada sobre el body crudo → 400 si inválida): `checkout.session.completed` → `PENDING→CONFIRMED` idempotente por `gateway_session_id`; `checkout.session.expired` → `FAILED`.
+4. ✅ Publica `TransaccionConfirmada(transactionId, conversationId, productId, buyerId, producerId, amount)` dentro de la transacción del webhook (sin listener hasta Épica 5). También expone `TransactionsModuleApi.getTransaction(id)` (sin consumidor aún, contrato listo).
 
 **Frontend:**
-1. Flujo de pago desde el chat cuando se eligió "por plataforma" — **atención:** verificar temprano en esta épica si la pasarela sandbox elegida requiere SDK/tokenización desde el navegador (algunas lo requieren); si es así, ese trabajo de frontend nace aquí, no se puede dejar para después.
-2. Pantalla de estado de la transacción (pendiente/confirmada) para el comprador.
-3. Vista simple de ledger/dispersión para el productor.
+1. ✅ Bloque de pago en `ConversationPage` (comprador, `method == PLATFORM`) → `startCheckout` → `window.location.href = checkoutUrl`. Checkout alojado ⇒ **sin SDK/tokenización en el navegador** (no se agregó ninguna dependencia).
+2. ✅ `TransactionStatusPage` (`/transacciones/:id`) — estado pendiente/confirmada/fallida; polling al volver de Stripe con `?pago=ok` hasta `CONFIRMED`.
+3. ✅ `ProducerSalesPage` (`/mis-ventas`, `role="PRODUCER"`) — ventas con desglose bruto/comisión/neto y total neto confirmado.
 
-**Criterio de salida:** una compra "por plataforma" acordada en el chat se paga en sandbox desde la UI, el webhook la confirma sola, el comprador ve el estado actualizado, y el ledger interno queda con el registro de dispersión.
+**Criterio de salida:** ✅ cumplido — verificado end-to-end (API + navegador con Stripe Checkout real de test + `stripe listen`): compra "por plataforma" acordada en el chat, pagada con `4242…`, confirmada sola por el webhook, el comprador ve "Confirmada" por polling, el productor ve la venta con la dispersión en el ledger. Bordes probados: reenvío del evento (idempotente, ledger sigue 1 fila), 2ª transacción en la misma conversación → 409, `OFF_PLATFORM` → 409, tercero ajeno → 403, firma inválida → 400, productor `POST` → 403. `mvn test` (ArchitectureTests) verde: `transactions` importa solo `chat.ChatModuleApi`, `catalog.CatalogModuleApi`, `auth.AuthModuleApi` (+ tipos) y `shared`, más el SDK de Stripe.
+
+**Decisiones tomadas (ver `docs/claude/epica-4-spec.md` §"Decisiones tomadas"):**
+- **Pasarela:** Stripe test mode + Checkout Session alojada (redirect). Descartado MercadoPago sandbox (setup más engorroso) y una pasarela simulada en el repo (no ejercita SDK ni verificación de firma reales).
+- **Sin SDK en el frontend:** consecuencia del Checkout alojado — el front solo redirige. Responde la alerta del backlog sobre tokenización en el navegador.
+- **Monto:** "se compra todo el listado" — `amount = price × quantity` publicada, `unit_price`/`quantity`/`amount` congelados en la fila. El monto nunca se acepta del cliente. Se validó contra el stock pero **no se descuenta** (ningún RF pide inventario). Requirió agregar `quantity` a `catalog.ProductSummary`.
+- **Ledger:** una fila por transacción confirmada (`gross`/`fee`/`net`). Descartada la doble entrada (2 filas con `entry_type`). Comisión **0 %** en fase 1; la columna `platform_fee_amount` y `PlatformFee` quedan listos para activar una tasa sin tocar el schema.
+- **`TransactionsModuleApi`:** se crea ya con `getTransaction(id)` aunque no tenga consumidor (decisión del usuario, contra el YAGNI del spec).
+- **Moneda:** `COP`. Stripe la trata como moneda de dos decimales → `unit_amount` = `amount × 100`; la conversión vive solo en `StripePaymentGateway`.
+- **Cardinalidad:** una transacción activa por conversación (409 con el id existente). Una `FAILED` no bloquea.
+- **Webhook:** `checkout.session.completed` + `checkout.session.expired`; idempotencia en tres capas (`gateway_session_id`, `Transaction.confirm()` devuelve `boolean`, `UNIQUE (transaction_id)` en ledger). `@Transactional` en `handleWebhook` (no solo en `confirm`) por el self-invocation. Sin saga, sin outbox: estado + ledger + evento en una transacción local.
+- **Ledger = registro, no ejecución:** no hay transferencia real al productor en ningún lado; el ledger es la "cuenta por pagar" (paso "dispersión/payout" fuera del MVP), como anticipó el PDR §7.
+- **Secretos de Stripe fuera de git:** `application.yml` versionado con placeholders; claves reales por env o `backend/config/application.yml` (gitignored). Dependencia nueva en `pom.xml`: `com.stripe:stripe-java`. Ruta nueva en `permitAll()`: el webhook.
 
 ## Épica 5 — Notificaciones (RF9)
 

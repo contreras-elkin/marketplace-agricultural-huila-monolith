@@ -10,12 +10,19 @@ import java.util.UUID;
  * <ul>
  *   <li>{@code id} + {@code producerId}: chat (Épica 3) valida el producto y
  *       sabe a quién abrirle la conversación;</li>
- *   <li>{@code price} + {@code unit}: transactions (Épica 4);</li>
+ *   <li>{@code price} + {@code unit} + {@code quantity}: transactions (Épica 4)
+ *       congela precio y cantidad publicada al iniciar el pago;</li>
  *   <li>{@code status}: decidir si se habilita chatear/comprar.</li>
  * </ul>
- * Categoría, municipio, foto y cantidad son presentación y viajan por el
- * endpoint REST público de detalle, no por esta API.
+ * Categoría, municipio y foto son presentación y viajan por el endpoint REST
+ * público de detalle, no por esta API.
  */
 public record ProductSummary(
-        UUID id, String name, UUID producerId, ProductStatus status, BigDecimal price, ProductUnit unit) {
+        UUID id,
+        String name,
+        UUID producerId,
+        ProductStatus status,
+        BigDecimal price,
+        ProductUnit unit,
+        BigDecimal quantity) {
 }

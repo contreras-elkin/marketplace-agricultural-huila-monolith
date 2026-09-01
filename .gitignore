@@ -1,6 +1,7 @@
 # Backend (Maven / Java)
 backend/target/
 backend/uploads/
+backend/config/
 *.class
 *.log
 

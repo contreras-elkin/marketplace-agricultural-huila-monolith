@@ -54,6 +54,10 @@ public class SecurityConfig {
                         // upgrade HTTP sino en el frame STOMP CONNECT, que valida
                         // StompAuthChannelInterceptor.
                         .requestMatchers("/ws/**").permitAll()
+                        // Webhook de Stripe (Épica 4): sin JWT (lo llama Stripe). La auth
+                        // real es la firma HMAC del header Stripe-Signature, verificada en
+                        // StripePaymentGateway. El resto de /api/transactions/** exige sesión.
+                        .requestMatchers(HttpMethod.POST, "/api/transactions/webhook/stripe").permitAll()
                         // "/mine" antes que el comodín: navegar el catálogo es público,
                         // pero listar "mis productos" exige sesión de productor.
                         .requestMatchers(HttpMethod.GET, "/api/catalog/products/mine").authenticated()
