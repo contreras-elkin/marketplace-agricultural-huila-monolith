@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import { Link, Route, Routes } from 'react-router-dom';
 import { apiGet } from './api/client';
 import { useAuth } from './auth/AuthContext';
+import { NotificationsBell } from './components/NotificationsBell';
 import { ProtectedRoute } from './components/ProtectedRoute';
 import { CatalogPage } from './pages/CatalogPage';
 import { ConversationPage } from './pages/ConversationPage';
@@ -9,6 +10,7 @@ import { ConversationsPage } from './pages/ConversationsPage';
 import { FarmProfilePage } from './pages/FarmProfilePage';
 import { LoginPage } from './pages/LoginPage';
 import { MyProductsPage } from './pages/MyProductsPage';
+import { NotificationsPage } from './pages/NotificationsPage';
 import { ProducerSalesPage } from './pages/ProducerSalesPage';
 import { ProductDetailPage } from './pages/ProductDetailPage';
 import { ProductFormPage } from './pages/ProductFormPage';
@@ -50,9 +52,13 @@ function Home() {
         <div>
           <p>
             Sesión iniciada como {auth.name} ({auth.role === 'PRODUCER' ? 'Productor' : 'Comprador'})
+            {' · '}
+            <NotificationsBell />
           </p>
           <p>
             <Link to="/chat">Mis conversaciones</Link>
+            {' · '}
+            <Link to="/notificaciones">Notificaciones</Link>
             {auth.role === 'PRODUCER' && (
               <>
                 {' · '}
@@ -94,6 +100,14 @@ function App() {
         element={
           <ProtectedRoute>
             <ConversationPage />
+          </ProtectedRoute>
+        }
+      />
+      <Route
+        path="/notificaciones"
+        element={
+          <ProtectedRoute>
+            <NotificationsPage />
           </ProtectedRoute>
         }
       />

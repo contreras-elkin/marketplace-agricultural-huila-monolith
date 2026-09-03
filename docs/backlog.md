@@ -122,20 +122,32 @@ Depende de Chat (de dónde sale el acuerdo de compra por plataforma) y Catálogo
 - **Ledger = registro, no ejecución:** no hay transferencia real al productor en ningún lado; el ledger es la "cuenta por pagar" (paso "dispersión/payout" fuera del MVP), como anticipó el PDR §7.
 - **Secretos de Stripe fuera de git:** `application.yml` versionado con placeholders; claves reales por env o `backend/config/application.yml` (gitignored). Dependencia nueva en `pom.xml`: `com.stripe:stripe-java`. Ruta nueva en `permitAll()`: el webhook.
 
-## Épica 5 — Notificaciones (RF9)
+## Épica 5 — Notificaciones (RF9) ✅ Completada
 
-Depende de Transacciones y Chat (son quienes publican los eventos que consume).
+Depende de Transacciones y Chat (son quienes publican los eventos que consume). `notifications`
+es el único módulo que **no expone `ModuleApi`**: solo reacciona a eventos.
 
-**Backend:**
-1. Listener de `TransaccionConfirmada` → crea notificación para el comprador (y opcionalmente productor).
-2. Listener de `NuevoMensajeChat` → crea notificación para el destinatario del mensaje.
-3. Endpoint REST simple para que el usuario liste sus notificaciones.
+**Backend** (nace el código de `notifications/`):
+1. ✅ Listener de `TransaccionConfirmada` → dos notificaciones: comprador ("Tu compra fue confirmada") y productor ("Tenés una venta confirmada"), nombre del producto vía `CatalogModuleApi`, link `/transacciones/{id}`.
+2. ✅ Listener de `NuevoMensajeChat` → notificación para el `recipientId` del evento ("Nuevo mensaje de {nombre}", vía `AuthModuleApi`), link `/chat/{id}`. Ambos listeners son `@Async` + `@TransactionalEventListener(AFTER_COMMIT)` + `@Transactional(REQUIRES_NEW)` en un pool dedicado; el cuerpo va en `try/catch` + `log.warn` (un fallo nunca vuelve a `chat`/`transactions`).
+3. ✅ REST `GET /api/notifications` (`{ items, unreadCount }`, últimas 50), `PUT /api/notifications/{id}/read` (204, 404 si es ajena), `PUT /api/notifications/read-all` (`{ updated }`). Todo `authenticated()`; `recipientId` = JWT.
 
 **Frontend:**
-1. Indicador/badge de notificaciones no leídas.
-2. Listado de notificaciones del usuario.
+1. ✅ `components/NotificationsBell` — 🔔 con badge de no leídas en `Home`, polling cada 20 s.
+2. ✅ `pages/NotificationsPage` (`/notificaciones`) — lista, no leídas con acento, clic marca leída + navega al `link`, botón "marcar todas como leídas".
 
-**Criterio de salida:** al confirmarse una transacción o llegar un mensaje nuevo, aparece una notificación en la UI del usuario correcto, incluso si se generó unos segundos después (asíncrono).
+**Criterio de salida:** ✅ cumplido — verificado end-to-end (script Node + navegador con Stripe test + `stripe listen`): un mensaje de chat genera notificación para el destinatario (no para el emisor) en ~0.4 s; un pago confirmado genera notificación para comprador y productor ~60 ms tras el commit; el badge sube en el navegador sin recargar por el polling; `markRead`/`read-all` bajan el contador; notif ajena → 404; reenvío del webhook de Stripe **no** duplica (dedupe por `existsByRecipientIdAndTypeAndSourceRefId` + índice único parcial). `mvn test` (ArchitectureTests) verde: `notifications` importa solo `chat.NuevoMensajeChat`, `transactions.TransaccionConfirmada`, `auth.AuthModuleApi`, `catalog.CatalogModuleApi` (+ tipos) y `shared`.
+
+**Decisiones tomadas (ver `docs/claude/epica-5-spec.md` §"Decisiones tomadas"):**
+- **Texto enriquecido:** el listener resuelve nombres vía `AuthModuleApi`/`CatalogModuleApi` (llamadas síncronas entre módulos) y guarda `title`/`body`/`link` ya armados. Descartado el texto genérico sin nombres.
+- **Listener asíncrono:** `@Async("notificationsExecutor")` + `@TransactionalEventListener(AFTER_COMMIT)` + `@Transactional`, con `@EnableAsync` y un `ThreadPoolTaskExecutor` dedicado (`NotificationsAsyncConfig`). Espejo del futuro consumidor RabbitMQ; el envío de mensaje / webhook no espera. Descartado el sync puro (más simple pero mete un insert en el hot path).
+- **Modelo de datos desnormalizado:** `type` + `title` + `body` + `link` + `read_at` en la fila; el frontend solo pinta. Descartado `type` + `reference_id` con render en el cliente.
+- **`TransaccionConfirmada` notifica a ambas partes** (comprador y productor). Descartado "solo comprador".
+- **Entrega por polling REST** (~20 s), no push STOMP: el criterio de salida tolera el desfase y evita wiring de user-destinations.
+- **Badge solo en `Home`** + página `/notificaciones`, sin layout compartido (fuera de fase).
+- **Dedupe:** columna `source_ref_id` (`messageId` / `transactionId`) + índice único parcial `(recipient_id, type, source_ref_id)` — lleva `recipient_id` porque `TransaccionConfirmada` produce dos filas con el mismo `(type, transactionId)`. El listener también chequea `existsBy...` antes de insertar.
+- **`NotificationType`** es interno de `notifications/domain` (ningún otro módulo lo consume). `notifications` no expone `ModuleApi`.
+- **`SecurityConfig`, `pom.xml` y los otros módulos no se tocaron** — módulo consumidor puro.
 
 ## Fuera de esta fase (no planificar todavía)
 

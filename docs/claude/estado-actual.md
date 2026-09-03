@@ -5,7 +5,7 @@
 > si algo aquí contradice el código, gana el código y hay que corregir este archivo.
 > Para el *porqué* de cada decisión, ver [`backlog.md`](../backlog.md) y [`architecture.md`](../architecture.md).
 >
-> **Última actualización:** 2026-09-01 · **Épica en curso:** 5 — Notificaciones (sin código todavía)
+> **Última actualización:** 2026-09-02 · **Épica en curso:** ninguna — Épicas 0-5 completas (fase 1 del monolito terminada; siguen extracción a microservicios y panel admin Angular, ambos fuera de esta fase)
 
 ## Progreso por épica
 
@@ -15,15 +15,16 @@
 | 1 — Auth/Usuarios (RF1, RF2) | ✅ completa, verificada end-to-end | commiteada (`f34c0a7`) |
 | 2 — Catálogo (RF3, RF4) | ✅ completa, verificada end-to-end | commiteada (`144eb6e`) |
 | 3 — Chat (RF5, RF6) | ✅ completa, verificada end-to-end | commiteada (`e33628c`) |
-| 4 — Transacciones (RF7, RF8) | ✅ completa, verificada end-to-end (Stripe sandbox) | **sin commitear (working tree)** |
-| 5 — Notificaciones (RF9) | ⬅️ siguiente — sin código | — |
+| 4 — Transacciones (RF7, RF8) | ✅ completa, verificada end-to-end (Stripe sandbox) | commiteada (`da93063`) |
+| 5 — Notificaciones (RF9) | ✅ completa, verificada end-to-end (chat + pago Stripe) | **sin commitear (working tree)** |
 
-⚠️ **Toda la Épica 4 está en el working tree sin commitear:** módulo `transactions/` completo,
-`db/migration/transactions/V402__create_transactions_tables.sql`, `transactions/{api,types}.ts`
-y páginas `TransactionStatusPage`/`ProducerSalesPage` en el frontend; cambios en `pom.xml`
-(`com.stripe:stripe-java`), `application.yml` (bloques `app.stripe.*` / `app.transactions.*`),
-`SecurityConfig` (webhook en `permitAll`), `catalog/ProductSummary` + `CatalogModuleApiImpl`
-(campo `quantity`), `App.tsx`, `ConversationPage.tsx`, `.gitignore`. Pendiente de commit por épica.
+⚠️ **Toda la Épica 5 está en el working tree sin commitear:** módulo `notifications/` completo
+(`domain/{Notification,NotificationType}`, `application/{NotificationEventListener,NotificationService,
+NotificationsAsyncConfig}`, `infrastructure/NotificationRepository`, `web/NotificationController` + 3 DTOs),
+`db/migration/notifications/V502__create_notifications_tables.sql`, `notifications/{api,types}.ts`,
+`components/NotificationsBell.tsx` y `pages/NotificationsPage.tsx` en el frontend, más `App.tsx`
+(ruta `/notificaciones` + badge/link en `Home`). **Sin cambios** en `shared`, `SecurityConfig`,
+`pom.xml` ni otros módulos — `notifications` es consumidor puro. Pendiente de commit por épica.
 
 ## Stack y layout
 
@@ -202,11 +203,41 @@ y páginas `TransactionStatusPage`/`ProducerSalesPage` en el frontend; cambios e
   `gateway_session_id`) + `transactions.ledger_entries` (`UNIQUE (transaction_id)`, índice por
   `producer_id`).
 
-### `notifications/`
+### `notifications/` — completo (Épica 5). Consume eventos de `chat` y `transactions`; datos de `auth` y `catalog`.
 
-Solo `db/migration/notifications/V501__create_schema.sql` (create schema vacío). Sin código Java.
-Nace en Épica 5; su primera migración de tablas es `V502` (rango reservado `V5xx`). Consumirá los
-eventos `NuevoMensajeChat` (chat) y `TransaccionConfirmada` (transactions).
+- **No expone `ModuleApi`** — nadie lo llama de forma síncrona, solo reacciona a eventos
+  (architecture.md §3b). Es el único módulo así.
+- `domain/{Notification, NotificationType}` — `Notification` con id UUID en el constructor;
+  `type` `@Enumerated(EnumType.STRING)` `@Column(length = 30)`; `readAt` `Instant` nullable
+  (`null` = no leída); `markRead(Instant)` idempotente. `NotificationType {NUEVO_MENSAJE_CHAT,
+  TRANSACCION_CONFIRMADA}` es **interno** (`notifications/domain`, ningún otro módulo lo usa).
+  Texto **desnormalizado**: `title`/`body`/`link` los arma el listener una sola vez.
+- `infrastructure/NotificationRepository` (`JpaRepository`): `findTop50ByRecipientIdOrderByCreatedAtDesc`,
+  `countByRecipientIdAndReadAtIsNull`, `existsByRecipientIdAndTypeAndSourceRefId` (dedupe),
+  `@Modifying @Query` `markAllRead(recipientId, now)`.
+- `application/`:
+  - `NotificationEventListener` — dos métodos `@Async("notificationsExecutor")
+    @TransactionalEventListener(phase = AFTER_COMMIT) @Transactional(REQUIRES_NEW)`:
+    - `on(NuevoMensajeChat)` → 1 notif para `recipientId` ("Nuevo mensaje de {nombre}", vía
+      `AuthModuleApi`), link `/chat/{conversationId}`, `sourceRefId = messageId`.
+    - `on(TransaccionConfirmada)` → 2 notifs: comprador ("Tu compra fue confirmada") y productor
+      ("Tenés una venta confirmada"), nombre del producto vía `CatalogModuleApi` (con fallback
+      "el producto" si se borró), link `/transacciones/{transactionId}`, `sourceRefId = transactionId`.
+    - Antes de insertar chequea `existsByRecipientIdAndTypeAndSourceRefId` (re-entrega). Todo el
+      cuerpo en `try/catch` + `log.warn`: un fallo del listener nunca vuelve a `chat`/`transactions`.
+  - `NotificationService` — `list` (últimas 50, `created_at` desc), `unreadCount`,
+    `markRead(id, recipientId)` (404 si no existe o no es del usuario), `markAllRead(recipientId)`.
+  - `NotificationsAsyncConfig` — `@EnableAsync` (global, pero solo este módulo usa `@Async`) +
+    bean `notificationsExecutor` (`ThreadPoolTaskExecutor`, core 2 / max 4 / queue 100, prefijo `notif-`).
+- `web/NotificationController` (`/api/notifications`), todo `authenticated()`, `recipientId` = JWT:
+  - `GET /api/notifications` → `{ items: NotificationResponse[], unreadCount }` (`NotificationResponse`
+    lleva `read` booleano, no `readAt`). Una llamada sirve al badge y a la página.
+  - `PUT /api/notifications/{id}/read` → **204** (`@ResponseStatus(NO_CONTENT)`), 404 si es ajena.
+  - `PUT /api/notifications/read-all` → 200 `{ updated: n }`.
+- Migración `V502__create_notifications_tables.sql` — `notifications.notifications` + índice
+  `(recipient_id, created_at DESC)` + índice único parcial `(recipient_id, type, source_ref_id)
+  WHERE source_ref_id IS NOT NULL` (dedupe; lleva `recipient_id` porque `TransaccionConfirmada`
+  genera dos filas con el mismo `(type, transactionId)`).
 
 ## Frontend — qué existe
 
@@ -223,8 +254,14 @@ eventos `NuevoMensajeChat` (chat) y `TransaccionConfirmada` (transactions).
   `reconnectDelay: 5000`, `send()`/`close()`).
 - `transactions/{api.ts, types.ts}` (Épica 4) — `startCheckout(conversationId, token)`,
   `getTransaction(id, token)`, `listMyTransactions(token)`; `formatMoney()`, `STATUS_LABELS`.
+- `notifications/{api.ts, types.ts}` (Épica 5) — `listNotifications(token)`,
+  `markNotificationRead(id, token)`, `markAllNotificationsRead(token)`; tipo `AppNotification`
+  (así llamado para no chocar con el `Notification` global del DOM), `TYPE_LABELS`.
 - `components/ProtectedRoute.tsx` — redirige a `/login` sin sesión, o fuera de la ruta si el
   `role` no coincide (`role` opcional).
+- `components/NotificationsBell.tsx` (Épica 5) — 🔔 con badge de no leídas; hace
+  `listNotifications` al montar y cada 20 s (polling — el criterio de salida tolera unos
+  segundos de desfase). Errores silenciosos. Se renderiza en `Home` (rama autenticada).
 - `pages/`: `RegisterPage`, `LoginPage`, `FarmProfilePage` (Épica 1); `CatalogPage`
   (`/catalogo`, pública), `ProductDetailPage` (`/productos/:id`, pública — **botón "Chatear"
   activo para `BUYER` con producto `ACTIVE` y ajeno → `POST /api/chat/conversations` y navega
@@ -240,17 +277,21 @@ eventos `NuevoMensajeChat` (chat) y `TransaccionConfirmada` (transactions).
   — estado de la compra; si vuelve de Stripe con `?pago=ok` y sigue `PENDING`, hace polling
   (~2 s, máx 15 intentos) hasta `CONFIRMED`/`FAILED`. `ProducerSalesPage` (`/mis-ventas`,
   `role="PRODUCER"`) — lista de ventas con desglose bruto/comisión/neto y total neto confirmado.
-- `App.tsx` define `<Routes>` (suma `/transacciones/:id` y `/mis-ventas`); `Home` suma el link
-  "Mis ventas" para productores. `main.tsx` = `BrowserRouter` + `AuthProvider`. `package.json`
-  **no** suma nada en Épica 4 (Checkout alojado → sin SDK JS). `.env`:
-  `VITE_API_BASE_URL=http://localhost:8080`.
+- `pages/` de Épica 5: `NotificationsPage` (`/notificaciones`, `ProtectedRoute` sin `role`) —
+  lista de `listNotifications`; no leídas con acento de borde izquierdo azul + ●, orden
+  reciente-primero; clic en una notif → `markNotificationRead` y navega a su `link`; botón
+  "marcar todas como leídas".
+- `App.tsx` define `<Routes>` (suma `/transacciones/:id`, `/mis-ventas` y `/notificaciones`);
+  `Home` suma el link "Mis ventas" para productores y, para cualquier sesión, `<NotificationsBell/>`
+  + link "Notificaciones". `main.tsx` = `BrowserRouter` + `AuthProvider`. `package.json` **no**
+  suma nada en Épicas 4 ni 5. `.env`: `VITE_API_BASE_URL=http://localhost:8080`.
 
 ## Datos y migraciones
 
 Postgres 16 (Docker Compose), 5 schemas, Flyway en `backend/src/main/resources/db/migration/<mod>/`.
 **Historial Flyway único combinado** → rangos reservados: `auth` V1xx · `catalog` V2xx ·
 `chat` V3xx · `transactions` V4xx · `notifications` V5xx. Aplicadas hoy: `V101`–`V103`, `V201`,
-`V202`, `V301`, `V302`, `V401`, `V402`, `V501`. `create-schemas: false` (cada módulo crea su
+`V202`, `V301`, `V302`, `V401`, `V402`, `V501`, `V502`. `create-schemas: false` (cada módulo crea su
 schema en su `V{n}01`). `spring.jpa.hibernate.ddl-auto: validate` → las entidades JPA nuevas
 deben calzar EXACTO con la migración (tipos, largo de varchar para enums, `TIMESTAMPTZ` para
 `Instant`). Multipart 5 MB. `app.uploads.dir = ./uploads` (gitignored).
@@ -296,6 +337,12 @@ plataforma" → Stripe Checkout alojado → tarjeta `4242 4242 4242 4242`, fecha
 cualquiera → vuelve a `/transacciones/:id?pago=ok` y el polling muestra "Confirmada" cuando el
 webhook (vía `stripe listen`) confirma. El productor lo ve en `/mis-ventas` con bruto/comisión/neto.
 
+Flujo de notificaciones (Épica 5): tras enviar un mensaje de chat, el destinatario ve subir el
+badge 🔔 en `Home` (polling ~20 s, sin recargar) y la notif "Nuevo mensaje de {nombre}" en
+`/notificaciones` que enlaza a `/chat/:id`. Tras confirmarse un pago, comprador y productor
+reciben "Tu compra/venta fue confirmada" enlazando a `/transacciones/:id`. Los listeners son
+`@Async`, así que la notif aparece un instante **después** del commit (no sincrónica).
+
 ## Gotchas vigentes
 
 - **JWT en `localStorage`** (desde Épica 3): la sesión sobrevive al refresh, pero el token
@@ -305,8 +352,12 @@ webhook (vía `stripe listen`) confirma. El productor lo ve en `/mis-ventas` con
   origen, así que una 2da sesión pisa el token de la 1ra al recargar. Para 2 usuarios reales
   usar 2 navegadores o perfiles distintos (o no recargar la pestaña de la 1ra sesión).
 - **Flyway out-of-order**: agregar una migración a un rango bajo (`V302`, `V402`) sobre una BD
-  que ya tiene aplicadas migraciones de rangos altos (`V501`) rompe la validación al arrancar.
+  que ya tiene aplicadas migraciones de rangos altos (`V502`) rompe la validación al arrancar.
   Resetear con `docker compose down -v && docker compose up -d`.
+- **Notificaciones asíncronas** (Épica 5): los listeners son `@Async` + `@TransactionalEventListener(AFTER_COMMIT)`
+  en el pool `notificationsExecutor`. La notificación aparece un instante después del envío del
+  mensaje / confirmación del pago, no en la misma respuesta — al probar por curl, esperar ~1 s y
+  reconsultar `GET /api/notifications`. `@EnableAsync` quedó global (en `NotificationsAsyncConfig`).
 - **Stripe test mode**: `stripe listen` **sin** `--live` (con `--live` reenvía eventos de dinero
   real y da un `whsec_` distinto). El `whsec_` de test es estable por cuenta;
   `stripe listen --print-secret` lo imprime sin levantar el listener. El backend necesita
