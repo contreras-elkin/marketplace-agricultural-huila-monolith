@@ -1,5 +1,5 @@
 import { useEffect, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError, mediaUrl } from '../api/client';
 import { getFarmProfile } from '../auth/api';
 import { useAuth } from '../auth/AuthContext';
@@ -13,6 +13,16 @@ import {
   type ProductInput,
   type ProductUnit,
 } from '../catalog/types';
+import { Alert } from '../ui/Alert';
+import { Breadcrumbs } from '../ui/Breadcrumbs';
+import { Button } from '../ui/Button';
+import { ButtonLink } from '../ui/ButtonLink';
+import { Card } from '../ui/Card';
+import { Field } from '../ui/Field';
+import { LoadingBlock } from '../ui/LoadingBlock';
+import { PageHeader } from '../ui/PageHeader';
+import { useToast } from '../ui/toast/useToast';
+import styles from './ProductFormPage.module.css';
 
 // Municipios frecuentes del Huila — solo sugerencias del datalist, no una lista cerrada.
 const HUILA_MUNICIPALITIES = [
@@ -25,6 +35,7 @@ export function ProductFormPage() {
   const isEdit = Boolean(editId);
   const { auth } = useAuth();
   const navigate = useNavigate();
+  const toast = useToast();
 
   const [name, setName] = useState('');
   const [category, setCategory] = useState<ProductCategory>('FRUTAS');
@@ -40,8 +51,7 @@ export function ProductFormPage() {
   const [error, setError] = useState<string | null>(null);
 
   // Edición: traigo el producto por el endpoint público de detalle (la propiedad
-  // exige que sea el dueño, se valida en el PUT). Creación: prellenó el municipio
-  // con el del perfil de finca del productor (editable).
+  // se valida en el PUT). Creación: prellenó el municipio con el del perfil de finca.
   useEffect(() => {
     if (!auth) return;
     if (isEdit && editId) {
@@ -80,12 +90,14 @@ export function ProductFormPage() {
         price: Number(price),
         municipality: municipality.trim(),
       };
-      const product = isEdit && editId
-        ? await updateProduct(auth.token, editId, input)
-        : await createProduct(auth.token, input);
+      const product =
+        isEdit && editId
+          ? await updateProduct(auth.token, editId, input)
+          : await createProduct(auth.token, input);
       if (photoFile) {
         await uploadProductPhoto(auth.token, product.id, photoFile);
       }
+      toast.success(isEdit ? 'Producto actualizado.' : 'Producto publicado.');
       navigate('/mis-productos');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo guardar el producto');
@@ -93,95 +105,121 @@ export function ProductFormPage() {
     }
   }
 
-  if (loading) return <p>Cargando producto...</p>;
+  const crumbs = [
+    { label: 'Inicio', to: '/' },
+    { label: 'Mis productos', to: '/mis-productos' },
+    { label: isEdit ? 'Editar' : 'Nuevo' },
+  ];
+
+  if (loading) {
+    return (
+      <>
+        <Breadcrumbs items={crumbs} />
+        <LoadingBlock label="Cargando producto…" />
+      </>
+    );
+  }
 
   return (
-    <main>
-      <p>
-        <Link to="/mis-productos">← Mis productos</Link>
-      </p>
-      <h1>{isEdit ? 'Editar producto' : 'Nuevo producto'}</h1>
+    <>
+      <Breadcrumbs items={crumbs} />
+      <PageHeader title={isEdit ? 'Editar producto' : 'Nuevo producto'} />
 
-      <form onSubmit={handleSubmit}>
-        <label>
-          Nombre
-          <input value={name} onChange={(e) => setName(e.target.value)} maxLength={150} required />
-        </label>
-        <label>
-          Categoría
-          <select value={category} onChange={(e) => setCategory(e.target.value as ProductCategory)}>
-            {CATEGORY_OPTIONS.map((c) => (
-              <option key={c} value={c}>
-                {CATEGORY_LABELS[c]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Unidad de venta
-          <select value={unit} onChange={(e) => setUnit(e.target.value as ProductUnit)}>
-            {UNIT_OPTIONS.map((u) => (
-              <option key={u} value={u}>
-                {UNIT_LABELS[u]}
-              </option>
-            ))}
-          </select>
-        </label>
-        <label>
-          Cantidad disponible
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={quantity}
-            onChange={(e) => setQuantity(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Precio (COP por unidad)
-          <input
-            type="number"
-            min="0"
-            step="0.01"
-            value={price}
-            onChange={(e) => setPrice(e.target.value)}
-            required
-          />
-        </label>
-        <label>
-          Municipio
-          <input
-            list="huila-municipalities"
-            value={municipality}
-            onChange={(e) => setMunicipality(e.target.value)}
-            maxLength={100}
-            required
-          />
-        </label>
-        <datalist id="huila-municipalities">
-          {HUILA_MUNICIPALITIES.map((m) => (
-            <option key={m} value={m} />
-          ))}
-        </datalist>
+      <Card>
+        <form className={styles.form} onSubmit={handleSubmit}>
+          <div className={styles.section}>
+            <span className={styles.sectionTitle}>Datos del producto</span>
 
-        <label>
-          Foto {isEdit ? '(reemplaza la actual)' : '(opcional)'}
-          <input
-            type="file"
-            accept="image/jpeg,image/png,image/webp"
-            onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
-          />
-        </label>
-        {currentPhotoUrl && !photoFile && (
-          <img src={mediaUrl(currentPhotoUrl)} alt="Foto actual" style={{ maxWidth: 200, borderRadius: 4 }} />
-        )}
+            <Field label="Nombre" required>
+              <input value={name} onChange={(e) => setName(e.target.value)} maxLength={150} required />
+            </Field>
 
-        {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Guardando...' : isEdit ? 'Guardar cambios' : 'Publicar producto'}
-        </button>
-      </form>
-    </main>
+            <div className={styles.grid2}>
+              <Field label="Categoría">
+                <select value={category} onChange={(e) => setCategory(e.target.value as ProductCategory)}>
+                  {CATEGORY_OPTIONS.map((c) => (
+                    <option key={c} value={c}>
+                      {CATEGORY_LABELS[c]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Unidad de venta">
+                <select value={unit} onChange={(e) => setUnit(e.target.value as ProductUnit)}>
+                  {UNIT_OPTIONS.map((u) => (
+                    <option key={u} value={u}>
+                      {UNIT_LABELS[u]}
+                    </option>
+                  ))}
+                </select>
+              </Field>
+            </div>
+
+            <div className={styles.grid2}>
+              <Field label="Cantidad disponible" required>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={quantity}
+                  onChange={(e) => setQuantity(e.target.value)}
+                  required
+                />
+              </Field>
+              <Field label="Precio" hint="COP por unidad" required>
+                <input
+                  type="number"
+                  min="0"
+                  step="0.01"
+                  value={price}
+                  onChange={(e) => setPrice(e.target.value)}
+                  required
+                />
+              </Field>
+            </div>
+
+            <Field label="Municipio" required>
+              <input
+                list="huila-municipalities"
+                value={municipality}
+                onChange={(e) => setMunicipality(e.target.value)}
+                maxLength={100}
+                required
+              />
+            </Field>
+            <datalist id="huila-municipalities">
+              {HUILA_MUNICIPALITIES.map((m) => (
+                <option key={m} value={m} />
+              ))}
+            </datalist>
+          </div>
+
+          <div className={styles.section}>
+            <span className={styles.sectionTitle}>Foto</span>
+            <Field label={isEdit ? 'Reemplazar la foto actual' : 'Foto (opcional)'}>
+              <input
+                type="file"
+                accept="image/jpeg,image/png,image/webp"
+                onChange={(e) => setPhotoFile(e.target.files?.[0] ?? null)}
+              />
+            </Field>
+            {currentPhotoUrl && !photoFile && (
+              <img src={mediaUrl(currentPhotoUrl)} alt="Foto actual" className={styles.preview} />
+            )}
+          </div>
+
+          {error && <Alert variant="error">{error}</Alert>}
+
+          <div className={styles.actions}>
+            <Button type="submit" loading={submitting}>
+              {submitting ? 'Guardando…' : isEdit ? 'Guardar cambios' : 'Publicar producto'}
+            </Button>
+            <ButtonLink to="/mis-productos" variant="ghost">
+              Cancelar
+            </ButtonLink>
+          </div>
+        </form>
+      </Card>
+    </>
   );
 }

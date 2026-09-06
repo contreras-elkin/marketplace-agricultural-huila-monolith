@@ -1,16 +1,32 @@
+import { ImageOff, PackagePlus, Pencil, Trash2 } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
 import { ApiError, mediaUrl } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { changeProductStatus, deleteProduct, getMyProducts } from '../catalog/api';
 import { CATEGORY_LABELS, UNIT_LABELS, type Product } from '../catalog/types';
+import { formatMoney } from '../lib/format';
+import { Alert } from '../ui/Alert';
+import { Badge } from '../ui/Badge';
+import { Breadcrumbs } from '../ui/Breadcrumbs';
+import { Button } from '../ui/Button';
+import { ButtonLink } from '../ui/ButtonLink';
+import { Card } from '../ui/Card';
+import { ConfirmDialog } from '../ui/ConfirmDialog';
+import { EmptyState } from '../ui/EmptyState';
+import { IconButton } from '../ui/IconButton';
+import { PageHeader } from '../ui/PageHeader';
+import { SkeletonLine } from '../ui/Skeleton';
+import { useToast } from '../ui/toast/useToast';
+import styles from './MyProductsPage.module.css';
 
 export function MyProductsPage() {
   const { auth } = useAuth();
+  const toast = useToast();
   const [products, setProducts] = useState<Product[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [confirmTarget, setConfirmTarget] = useState<Product | null>(null);
 
   useEffect(() => {
     if (!auth) return;
@@ -28,6 +44,7 @@ export function MyProductsPage() {
       const next = product.status === 'ACTIVE' ? 'SOLD_OUT' : 'ACTIVE';
       const updated = await changeProductStatus(auth.token, product.id, next);
       setProducts((list) => list.map((p) => (p.id === updated.id ? updated : p)));
+      toast.success(next === 'SOLD_OUT' ? 'Producto marcado como agotado.' : 'Producto reactivado.');
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo cambiar el estado');
     } finally {
@@ -35,69 +52,115 @@ export function MyProductsPage() {
     }
   }
 
-  async function remove(product: Product) {
-    if (!auth) return;
-    if (!window.confirm(`¿Eliminar "${product.name}"? No aparecerá más en el catálogo.`)) return;
+  async function confirmRemove() {
+    if (!auth || !confirmTarget) return;
+    const product = confirmTarget;
     setBusyId(product.id);
     setError(null);
     try {
       await deleteProduct(auth.token, product.id);
       setProducts((list) => list.filter((p) => p.id !== product.id));
+      toast.success(`"${product.name}" se eliminó del catálogo.`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : 'No se pudo eliminar el producto');
     } finally {
       setBusyId(null);
+      setConfirmTarget(null);
     }
   }
 
   return (
-    <main>
-      <p>
-        <Link to="/">← Inicio</Link>
-      </p>
-      <h1>Mis productos</h1>
-      <p>
-        <Link to="/mis-productos/nuevo">+ Nuevo producto</Link>
-      </p>
+    <>
+      <Breadcrumbs items={[{ label: 'Inicio', to: '/' }, { label: 'Mis productos' }]} />
+      <PageHeader
+        title="Mis productos"
+        actions={
+          <ButtonLink to="/mis-productos/nuevo">
+            <PackagePlus size={16} aria-hidden="true" />
+            Nuevo producto
+          </ButtonLink>
+        }
+      />
 
-      {loading && <p>Cargando...</p>}
-      {error && <p role="alert">{error}</p>}
-      {!loading && products.length === 0 && <p>Todavía no publicaste ningún producto.</p>}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: '0.75rem' }}>
-        {products.map((p) => (
-          <li
-            key={p.id}
-            style={{ border: '1px solid #ccc', borderRadius: 8, padding: '0.75rem', display: 'flex', gap: '1rem', alignItems: 'center' }}
-          >
-            {p.photoUrl ? (
-              <img src={mediaUrl(p.photoUrl)} alt={p.name} style={{ width: 72, height: 72, objectFit: 'cover', borderRadius: 4 }} />
-            ) : (
-              <div style={{ width: 72, height: 72, background: '#eee', borderRadius: 4, display: 'grid', placeItems: 'center', fontSize: 12, color: '#888' }}>
-                Sin foto
+      {loading ? (
+        <Card>
+          <SkeletonLine width="50%" />
+          <SkeletonLine width="70%" />
+        </Card>
+      ) : products.length === 0 ? (
+        <EmptyState
+          icon={PackagePlus}
+          title="Todavía no publicaste ningún producto"
+          description="Creá tu primera publicación para que aparezca en el catálogo."
+          action={<ButtonLink to="/mis-productos/nuevo">Publicar el primero</ButtonLink>}
+        />
+      ) : (
+        <ul className={styles.list}>
+          {products.map((p) => (
+            <Card key={p.id} as="li">
+              <div className={styles.row}>
+                {p.photoUrl ? (
+                  <img src={mediaUrl(p.photoUrl)} alt={p.name} className={styles.thumb} />
+                ) : (
+                  <span className={styles.noPhoto}>
+                    <ImageOff size={20} aria-hidden="true" />
+                  </span>
+                )}
+                <div className={styles.info}>
+                  <span className={styles.name}>
+                    {p.name}
+                    <Badge variant={p.status === 'ACTIVE' ? 'success' : 'neutral'}>
+                      {p.status === 'ACTIVE' ? 'Activo' : 'Agotado'}
+                    </Badge>
+                  </span>
+                  <span className={styles.meta}>
+                    {CATEGORY_LABELS[p.category]} · {p.municipality} · {formatMoney(p.price)} /{' '}
+                    {UNIT_LABELS[p.unit].toLowerCase()}
+                  </span>
+                </div>
+                <div className={styles.actions}>
+                  <ButtonLink to={`/mis-productos/${p.id}/editar`} variant="secondary" size="sm">
+                    <Pencil size={14} aria-hidden="true" />
+                    Editar
+                  </ButtonLink>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    disabled={busyId === p.id}
+                    onClick={() => toggleStatus(p)}
+                  >
+                    Marcar {p.status === 'ACTIVE' ? 'agotado' : 'activo'}
+                  </Button>
+                  <IconButton
+                    icon={<Trash2 size={16} aria-hidden="true" />}
+                    label={`Eliminar ${p.name}`}
+                    variant="danger"
+                    disabled={busyId === p.id}
+                    onClick={() => setConfirmTarget(p)}
+                  />
+                </div>
               </div>
-            )}
-            <div style={{ flex: 1 }}>
-              <strong>{p.name}</strong>{' '}
-              <span style={{ color: p.status === 'ACTIVE' ? '#1a7f37' : '#a15c00' }}>
-                ({p.status === 'ACTIVE' ? 'Activo' : 'Agotado'})
-              </span>
-              <br />
-              {CATEGORY_LABELS[p.category]} · {p.municipality} · ${p.price.toLocaleString('es-CO')} /{' '}
-              {UNIT_LABELS[p.unit].toLowerCase()}
-            </div>
-            <div style={{ display: 'flex', gap: '0.5rem', flexWrap: 'wrap' }}>
-              <Link to={`/mis-productos/${p.id}/editar`}>Editar</Link>
-              <button type="button" disabled={busyId === p.id} onClick={() => toggleStatus(p)}>
-                Marcar {p.status === 'ACTIVE' ? 'agotado' : 'activo'}
-              </button>
-              <button type="button" disabled={busyId === p.id} onClick={() => remove(p)}>
-                Eliminar
-              </button>
-            </div>
-          </li>
-        ))}
-      </ul>
-    </main>
+            </Card>
+          ))}
+        </ul>
+      )}
+
+      <ConfirmDialog
+        open={confirmTarget !== null}
+        title="Eliminar producto"
+        body={
+          confirmTarget
+            ? `"${confirmTarget.name}" no aparecerá más en el catálogo. Esta acción no se puede deshacer.`
+            : ''
+        }
+        confirmLabel="Eliminar"
+        danger
+        loading={busyId !== null && confirmTarget !== null && busyId === confirmTarget.id}
+        onConfirm={confirmRemove}
+        onCancel={() => setConfirmTarget(null)}
+      />
+    </>
   );
 }

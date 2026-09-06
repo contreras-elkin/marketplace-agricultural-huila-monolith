@@ -1,0 +1,27 @@
+.iconBtn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 2rem;
+  height: 2rem;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--color-text-muted);
+  background: transparent;
+  transition: background-color 0.12s ease, color 0.12s ease;
+}
+
+.iconBtn:not(:disabled):hover {
+  background: var(--color-surface-sunken);
+  color: var(--color-text);
+}
+
+.iconBtn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.danger:not(:disabled):hover {
+  background: var(--color-danger-bg);
+  color: var(--color-danger);
+}

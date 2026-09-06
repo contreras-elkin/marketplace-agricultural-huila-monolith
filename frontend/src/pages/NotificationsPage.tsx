@@ -1,9 +1,25 @@
+import { BellOff, CheckCircle2, MessageSquare } from 'lucide-react';
 import { useCallback, useEffect, useState } from 'react';
-import { Link, useNavigate } from 'react-router-dom';
+import { useNavigate } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { listNotifications, markAllNotificationsRead, markNotificationRead } from '../notifications/api';
 import type { AppNotification } from '../notifications/types';
+import { formatRelative } from '../lib/format';
+import { Alert } from '../ui/Alert';
+import { Breadcrumbs } from '../ui/Breadcrumbs';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
+import { cx } from '../ui/cx';
+import { EmptyState } from '../ui/EmptyState';
+import { PageHeader } from '../ui/PageHeader';
+import { SkeletonLine } from '../ui/Skeleton';
+import styles from './NotificationsPage.module.css';
+
+const TYPE_ICON = {
+  NUEVO_MENSAJE_CHAT: MessageSquare,
+  TRANSACCION_CONFIRMADA: CheckCircle2,
+};
 
 export function NotificationsPage() {
   const { auth } = useAuth();
@@ -48,60 +64,63 @@ export function NotificationsPage() {
 
   if (!auth) return null;
 
+  const hasUnread = items.some((n) => !n.read);
+
   return (
-    <main>
-      <p>
-        <Link to="/">← Inicio</Link>
-      </p>
-      <h1>Notificaciones</h1>
+    <>
+      <Breadcrumbs items={[{ label: 'Inicio', to: '/' }, { label: 'Notificaciones' }]} />
+      <PageHeader
+        title="Notificaciones"
+        actions={
+          items.length > 0 && (
+            <Button variant="ghost" onClick={markAll} disabled={!hasUnread}>
+              Marcar todas como leídas
+            </Button>
+          )
+        }
+      />
 
-      {loading && <p>Cargando...</p>}
-      {error && <p role="alert">{error}</p>}
-      {!loading && !error && items.length === 0 && <p>No tenés notificaciones.</p>}
+      {error && <Alert variant="error">{error}</Alert>}
 
-      {items.length > 0 && (
-        <p>
-          <button onClick={markAll}>Marcar todas como leídas</button>
-        </p>
+      {loading ? (
+        <Card>
+          <SkeletonLine width="40%" />
+          <SkeletonLine width="80%" />
+          <SkeletonLine width="60%" />
+        </Card>
+      ) : items.length === 0 ? (
+        <EmptyState icon={BellOff} title="No tenés notificaciones" />
+      ) : (
+        <ul className={styles.list}>
+          {items.map((n) => {
+            const Icon = TYPE_ICON[n.type] ?? MessageSquare;
+            return (
+              <Card
+                key={n.id}
+                as="li"
+                padding="none"
+                className={cx(styles.item, !n.read && styles.itemUnread)}
+              >
+                <button type="button" className={styles.btn} onClick={() => openNotification(n)}>
+                  <span className={styles.icon}>
+                    <Icon size={16} aria-hidden="true" />
+                  </span>
+                  <span className={styles.body}>
+                    <span className={styles.title}>
+                      {!n.read && <span className={styles.unreadDot} aria-hidden="true" />}
+                      {n.title}
+                    </span>
+                    <br />
+                    <span className={styles.text}>{n.body}</span>
+                    <br />
+                    <span className={styles.time}>{formatRelative(n.createdAt)}</span>
+                  </span>
+                </button>
+              </Card>
+            );
+          })}
+        </ul>
       )}
-
-      <ul style={{ listStyle: 'none', padding: 0, display: 'grid', gap: '0.5rem' }}>
-        {items.map((n) => (
-          <li
-            key={n.id}
-            style={{
-              border: '1px solid #ccc',
-              borderLeftWidth: 4,
-              borderLeftColor: n.read ? '#ccc' : '#0b5fff',
-              borderRadius: 8,
-              padding: '0.75rem',
-            }}
-          >
-            <button
-              onClick={() => openNotification(n)}
-              style={{
-                display: 'block',
-                width: '100%',
-                textAlign: 'left',
-                background: 'none',
-                border: 'none',
-                padding: 0,
-                font: 'inherit',
-                cursor: 'pointer',
-              }}
-            >
-              <strong>{n.title}</strong>
-              {!n.read && <span style={{ color: '#0b5fff' }}> ●</span>}
-              <br />
-              <span>{n.body}</span>
-              <br />
-              <small style={{ color: '#666' }}>
-                {new Date(n.createdAt).toLocaleString('es-CO')}
-              </small>
-            </button>
-          </li>
-        ))}
-      </ul>
-    </main>
+    </>
   );
 }

@@ -1,10 +1,20 @@
+import { Coins, ImageOff, MapPin, Package, Tag, UserRound } from 'lucide-react';
 import { useEffect, useState } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError, mediaUrl } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { getProduct } from '../catalog/api';
 import { CATEGORY_LABELS, UNIT_LABELS, type ProductDetail } from '../catalog/types';
 import { openConversation } from '../chat/api';
+import { formatMoney, formatQuantity } from '../lib/format';
+import { Alert } from '../ui/Alert';
+import { Badge } from '../ui/Badge';
+import { Breadcrumbs } from '../ui/Breadcrumbs';
+import { Button } from '../ui/Button';
+import { ButtonLink } from '../ui/ButtonLink';
+import { EmptyState } from '../ui/EmptyState';
+import { LoadingBlock } from '../ui/LoadingBlock';
+import styles from './ProductDetailPage.module.css';
 
 export function ProductDetailPage() {
   const { id } = useParams<{ id: string }>();
@@ -32,13 +42,15 @@ export function ProductDetailPage() {
       .finally(() => setLoading(false));
   }, [id]);
 
-  if (loading) return <p>Cargando producto...</p>;
+  if (loading) return <LoadingBlock label="Cargando producto…" />;
+
   if (error) {
     return (
-      <main>
-        <p role="alert">{error}</p>
-        <Link to="/catalogo">← Volver al catálogo</Link>
-      </main>
+      <EmptyState
+        icon={ImageOff}
+        title={error}
+        action={<ButtonLink to="/catalogo">Volver al catálogo</ButtonLink>}
+      />
     );
   }
   if (!data) return null;
@@ -64,71 +76,94 @@ export function ProductDetailPage() {
     }
   }
 
+  const chatTitle = !auth
+    ? undefined
+    : auth.role !== 'BUYER'
+      ? 'Solo los compradores pueden iniciar un chat'
+      : isOwnProduct
+        ? 'Es tu propio producto'
+        : soldOut
+          ? 'Producto agotado'
+          : undefined;
+
   return (
-    <main>
-      <p>
-        <Link to="/catalogo">← Volver al catálogo</Link>
-      </p>
-      <h1>{product.name}</h1>
-      {soldOut && <p role="status" style={{ color: '#a15c00' }}>Producto agotado</p>}
+    <>
+      <Breadcrumbs
+        items={[
+          { label: 'Inicio', to: '/' },
+          { label: 'Catálogo', to: '/catalogo' },
+          { label: product.name },
+        ]}
+      />
 
-      {product.photoUrl ? (
-        <img
-          src={mediaUrl(product.photoUrl)}
-          alt={product.name}
-          style={{ maxWidth: 420, width: '100%', borderRadius: 8 }}
-        />
-      ) : (
-        <div style={{ maxWidth: 420, height: 240, background: '#eee', borderRadius: 8, display: 'grid', placeItems: 'center', color: '#888' }}>
-          Sin foto
+      <div className={styles.layout}>
+        {product.photoUrl ? (
+          <img src={mediaUrl(product.photoUrl)} alt={product.name} className={styles.photo} />
+        ) : (
+          <div className={styles.noPhoto}>
+            <ImageOff size={24} aria-hidden="true" />
+            Sin foto
+          </div>
+        )}
+
+        <div className={styles.info}>
+          <div className={styles.titleRow}>
+            <h1>{product.name}</h1>
+            {soldOut && <Badge variant="neutral">Agotado</Badge>}
+          </div>
+
+          <p className={styles.price}>
+            {formatMoney(product.price)}{' '}
+            <span className={styles.priceUnit}>por {UNIT_LABELS[product.unit].toLowerCase()}</span>
+          </p>
+
+          <dl className={styles.specs}>
+            <dt className={styles.specKey}>
+              <UserRound size={15} aria-hidden="true" /> Productor
+            </dt>
+            <dd className={styles.specVal}>{producerName}</dd>
+
+            <dt className={styles.specKey}>
+              <Tag size={15} aria-hidden="true" /> Categoría
+            </dt>
+            <dd className={styles.specVal}>{CATEGORY_LABELS[product.category]}</dd>
+
+            <dt className={styles.specKey}>
+              <MapPin size={15} aria-hidden="true" /> Municipio
+            </dt>
+            <dd className={styles.specVal}>{product.municipality}</dd>
+
+            <dt className={styles.specKey}>
+              <Package size={15} aria-hidden="true" /> Cantidad disponible
+            </dt>
+            <dd className={styles.specVal}>{formatQuantity(product.quantity, product.unit, { long: true })}</dd>
+
+            <dt className={styles.specKey}>
+              <Coins size={15} aria-hidden="true" /> Precio
+            </dt>
+            <dd className={styles.specVal}>
+              {formatMoney(product.price)} / {UNIT_LABELS[product.unit].toLowerCase()}
+            </dd>
+          </dl>
+
+          {/* Punto de entrada al chat (Épica 3): solo comprador, producto activo y ajeno. */}
+          {!auth ? (
+            <Button onClick={() => navigate('/login')}>
+              Iniciá sesión para chatear con el productor
+            </Button>
+          ) : (
+            <Button
+              onClick={handleChat}
+              disabled={!canChat || openingChat}
+              loading={openingChat}
+              title={chatTitle}
+            >
+              {openingChat ? 'Abriendo chat…' : 'Chatear con el productor'}
+            </Button>
+          )}
+          {chatError && <Alert variant="error">{chatError}</Alert>}
         </div>
-      )}
-
-      <dl>
-        <dt>Productor</dt>
-        <dd>{producerName}</dd>
-        <dt>Categoría</dt>
-        <dd>{CATEGORY_LABELS[product.category]}</dd>
-        <dt>Municipio</dt>
-        <dd>{product.municipality}</dd>
-        <dt>Precio</dt>
-        <dd>
-          ${product.price.toLocaleString('es-CO')} por {UNIT_LABELS[product.unit].toLowerCase()}
-        </dd>
-        <dt>Cantidad disponible</dt>
-        <dd>
-          {product.quantity.toLocaleString('es-CO')} {UNIT_LABELS[product.unit].toLowerCase()}
-        </dd>
-      </dl>
-
-      {/* Punto de entrada al chat (Épica 3): solo comprador, producto activo y ajeno. */}
-      {!auth && (
-        <button type="button" onClick={() => navigate('/login')}>
-          Iniciá sesión para chatear con el productor
-        </button>
-      )}
-      {auth && auth.role !== 'BUYER' && (
-        <button type="button" disabled title="Solo los compradores pueden iniciar un chat">
-          Chatear con el productor
-        </button>
-      )}
-      {auth && auth.role === 'BUYER' && (
-        <button
-          type="button"
-          onClick={handleChat}
-          disabled={!canChat || openingChat}
-          title={
-            isOwnProduct
-              ? 'Es tu propio producto'
-              : soldOut
-                ? 'Producto agotado'
-                : undefined
-          }
-        >
-          {openingChat ? 'Abriendo chat...' : 'Chatear con el productor'}
-        </button>
-      )}
-      {chatError && <p role="alert">{chatError}</p>}
-    </main>
+      </div>
+    </>
   );
 }

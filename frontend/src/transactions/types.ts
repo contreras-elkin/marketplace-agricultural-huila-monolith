@@ -49,11 +49,8 @@ export const STATUS_LABELS: Record<TransactionStatus, string> = {
   FAILED: 'Fallida / expirada',
 };
 
-/** Los montos del backend ya vienen en pesos (NUMERIC(12,2)); acá solo se formatean. */
-export function formatMoney(amount: number, currency = 'COP'): string {
-  return new Intl.NumberFormat('es-CO', {
-    style: 'currency',
-    currency,
-    maximumFractionDigits: 0,
-  }).format(amount);
-}
+/**
+ * Formato de dinero unificado (Épica 6): la implementación vive en `src/lib/format.ts`.
+ * Se re-exporta desde acá para no romper los imports existentes de este módulo.
+ */
+export { formatMoney } from '../lib/format';

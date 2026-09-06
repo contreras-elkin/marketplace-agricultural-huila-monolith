@@ -1,5 +1,6 @@
+import { Send } from 'lucide-react';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { Link, useNavigate, useParams } from 'react-router-dom';
+import { useNavigate, useParams } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
 import { getConversation, getMessages, setPurchaseMethod } from '../chat/api';
@@ -12,6 +13,14 @@ import {
 } from '../chat/types';
 import { connectToConversation, type ChatSocket } from '../chat/ws';
 import { listMyTransactions, startCheckout } from '../transactions/api';
+import { formatTime } from '../lib/format';
+import { Alert } from '../ui/Alert';
+import { Badge } from '../ui/Badge';
+import { Breadcrumbs } from '../ui/Breadcrumbs';
+import { Button } from '../ui/Button';
+import { cx } from '../ui/cx';
+import { LoadingBlock } from '../ui/LoadingBlock';
+import styles from './ConversationPage.module.css';
 
 export function ConversationPage() {
   const { conversationId } = useParams<{ conversationId: string }>();
@@ -29,6 +38,7 @@ export function ConversationPage() {
 
   const socketRef = useRef<ChatSocket | null>(null);
   const connectedOnceRef = useRef(false);
+  const historyRef = useRef<HTMLDivElement>(null);
 
   const token = auth?.token;
   const myId = auth?.userId;
@@ -78,7 +88,6 @@ export function ConversationPage() {
         setConnected(isConnected);
         if (isConnected) {
           if (connectedOnceRef.current) {
-            // Reconexión: recargar por REST para tapar los mensajes perdidos durante el corte.
             getMessages(conversationId, token)
               .then(setMessages)
               .catch(() => undefined);
@@ -94,6 +103,12 @@ export function ConversationPage() {
       socketRef.current = null;
     };
   }, [conversationId, token]);
+
+  // Autoscroll del historial al último mensaje.
+  useEffect(() => {
+    const el = historyRef.current;
+    if (el) el.scrollTop = el.scrollHeight;
+  }, [messages]);
 
   function handleSend(event: FormEvent) {
     event.preventDefault();
@@ -129,7 +144,9 @@ export function ConversationPage() {
       if (err instanceof ApiError && err.status === 409) {
         try {
           const mine = await listMyTransactions(token);
-          const existing = mine.find((t) => t.conversationId === conversationId && t.status !== 'FAILED');
+          const existing = mine.find(
+            (t) => t.conversationId === conversationId && t.status !== 'FAILED',
+          );
           if (existing) {
             navigate(`/transacciones/${existing.id}`);
             return;
@@ -144,129 +161,110 @@ export function ConversationPage() {
   }
 
   if (!auth) return null;
-  if (loading) return <p>Cargando conversación...</p>;
+  if (loading) return <LoadingBlock label="Cargando conversación…" />;
   if (error && !conversation) {
     return (
-      <main>
-        <p role="alert">{error}</p>
-        <Link to="/chat">← Mis conversaciones</Link>
-      </main>
+      <>
+        <Breadcrumbs items={[{ label: 'Inicio', to: '/' }, { label: 'Conversaciones', to: '/chat' }]} />
+        <Alert variant="error">{error}</Alert>
+      </>
     );
   }
   if (!conversation) return null;
 
   const otherName =
     conversation.buyerId === myId ? conversation.producerName : conversation.buyerName;
+  const isBuyer = conversation.buyerId === myId;
 
   return (
-    <main>
-      <p>
-        <Link to="/chat">← Mis conversaciones</Link>
-      </p>
-      <h1>{conversation.productName}</h1>
-      <p>
-        Conversación con <strong>{otherName}</strong>{' '}
-        <span style={{ color: connected ? '#1a7f37' : '#a15c00' }}>
-          ({connected ? 'en línea' : 'reconectando...'})
-        </span>
-      </p>
+    <>
+      <Breadcrumbs
+        items={[
+          { label: 'Inicio', to: '/' },
+          { label: 'Conversaciones', to: '/chat' },
+          { label: conversation.productName },
+        ]}
+      />
 
-      <label style={{ display: 'block', margin: '0.5rem 0' }}>
-        Forma de compra acordada{' '}
-        <select
-          value={conversation.agreedPurchaseMethod ?? ''}
-          disabled={savingMethod}
-          onChange={(e) => handleMethodChange(e.target.value as AgreedPurchaseMethod)}
-        >
-          <option value="" disabled>
-            Sin acordar
-          </option>
-          {PURCHASE_METHOD_OPTIONS.map((method) => (
-            <option key={method} value={method}>
-              {PURCHASE_METHOD_LABELS[method]}
-            </option>
-          ))}
-        </select>
-      </label>
+      <div className={styles.head}>
+        <h1 className={styles.headTitle}>{conversation.productName}</h1>
+        <span className={styles.headSub}>con {otherName}</span>
+        <Badge variant={connected ? 'success' : 'warning'} dot>
+          {connected ? 'en línea' : 'reconectando…'}
+        </Badge>
+      </div>
 
-      {conversation.agreedPurchaseMethod === 'PLATFORM' &&
-        (conversation.buyerId === myId ? (
-          <div
-            style={{
-              margin: '0.5rem 0',
-              padding: '0.6rem',
-              border: '1px solid #1a7f37',
-              borderRadius: 8,
-              background: '#f0fbf3',
-            }}
+      <div className={styles.controls}>
+        <div className={styles.methodRow}>
+          <label htmlFor="purchase-method">Forma de compra acordada</label>
+          <select
+            id="purchase-method"
+            value={conversation.agreedPurchaseMethod ?? ''}
+            disabled={savingMethod}
+            onChange={(e) => handleMethodChange(e.target.value as AgreedPurchaseMethod)}
           >
-            <strong>Compra por la plataforma</strong>
-            <p style={{ margin: '0.3rem 0' }}>
-              Se cobra la cantidad publicada del producto en un checkout seguro de la pasarela.
-            </p>
-            <button type="button" onClick={handlePay} disabled={paying}>
-              {paying ? 'Redirigiendo al pago...' : 'Pagar por la plataforma'}
-            </button>
-          </div>
-        ) : (
-          <p style={{ color: '#1a7f37', margin: '0.5rem 0' }}>
-            Compra por la plataforma acordada — esperando que el comprador realice el pago.
-          </p>
-        ))}
+            <option value="" disabled>
+              Sin acordar
+            </option>
+            {PURCHASE_METHOD_OPTIONS.map((method) => (
+              <option key={method} value={method}>
+                {PURCHASE_METHOD_LABELS[method]}
+              </option>
+            ))}
+          </select>
+        </div>
 
-      {error && <p role="alert">{error}</p>}
+        {conversation.agreedPurchaseMethod === 'PLATFORM' &&
+          (isBuyer ? (
+            <div className={styles.payBlock}>
+              <span className={styles.payTitle}>Compra por la plataforma</span>
+              <p>Se cobra la cantidad publicada del producto en un checkout seguro de la pasarela.</p>
+              <Button onClick={handlePay} loading={paying}>
+                {paying ? 'Redirigiendo al pago…' : 'Pagar por la plataforma'}
+              </Button>
+            </div>
+          ) : (
+            <Alert variant="success">
+              Compra por la plataforma acordada — esperando que el comprador realice el pago.
+            </Alert>
+          ))}
 
-      <ul
-        style={{
-          listStyle: 'none',
-          padding: '0.5rem',
-          border: '1px solid #ccc',
-          borderRadius: 8,
-          minHeight: 200,
-          maxHeight: 380,
-          overflowY: 'auto',
-          display: 'grid',
-          gap: '0.4rem',
-        }}
-      >
-        {messages.length === 0 && <li style={{ color: '#666' }}>Todavía no hay mensajes.</li>}
+        {error && <Alert variant="error">{error}</Alert>}
+      </div>
+
+      <div className={styles.history} ref={historyRef}>
+        {messages.length === 0 && <p className={styles.emptyHistory}>Todavía no hay mensajes.</p>}
         {messages.map((message) => {
           const mine = message.senderId === myId;
           return (
-            <li key={message.id} style={{ textAlign: mine ? 'right' : 'left' }}>
-              <span
-                style={{
-                  display: 'inline-block',
-                  background: mine ? '#d7ebff' : '#eee',
-                  borderRadius: 8,
-                  padding: '0.35rem 0.6rem',
-                  maxWidth: '80%',
-                }}
-              >
-                <small style={{ color: '#555' }}>
-                  {mine ? 'Vos' : otherName} · {new Date(message.sentAt).toLocaleTimeString('es-CO')}
-                </small>
-                <br />
-                {message.body}
+            <div
+              key={message.id}
+              className={cx(styles.bubbleRow, mine && styles.bubbleRowMine)}
+            >
+              <span className={styles.bubbleMeta}>
+                {mine ? 'Vos' : otherName} · {formatTime(message.sentAt)}
               </span>
-            </li>
+              <span className={cx(styles.bubble, mine && styles.bubbleMine)}>{message.body}</span>
+            </div>
           );
         })}
-      </ul>
+      </div>
 
-      <form onSubmit={handleSend} style={{ display: 'flex', gap: '0.5rem', marginTop: '0.5rem' }}>
+      <form onSubmit={handleSend} className={styles.composer}>
         <input
           type="text"
           value={draft}
           onChange={(e) => setDraft(e.target.value)}
-          placeholder="Escribí un mensaje..."
+          placeholder="Escribí un mensaje…"
           maxLength={2000}
-          style={{ flex: 1 }}
+          className={styles.composerInput}
+          aria-label="Mensaje"
         />
-        <button type="submit" disabled={!connected || draft.trim().length === 0}>
+        <Button type="submit" disabled={!connected || draft.trim().length === 0}>
+          <Send size={16} aria-hidden="true" />
           Enviar
-        </button>
+        </Button>
       </form>
-    </main>
+    </>
   );
 }

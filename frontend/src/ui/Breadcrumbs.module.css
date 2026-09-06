@@ -1,0 +1,33 @@
+.nav {
+  margin-bottom: var(--space-4);
+}
+
+.list {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+  list-style: none;
+  padding: 0;
+  font-size: var(--text-sm);
+  color: var(--color-text-subtle);
+}
+
+.item {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.link {
+  color: var(--color-text-muted);
+}
+
+.current {
+  color: var(--color-text);
+  font-weight: 500;
+}
+
+.sep {
+  color: var(--color-text-subtle);
+}

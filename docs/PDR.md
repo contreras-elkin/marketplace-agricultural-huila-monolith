@@ -1,23 +1,23 @@
-# PDR — Marketplace Agrícola Huila (MVP)
+# PDR — Marketplace Agrícola Huila (MVP - 1 Corte)
 
 ## 1. Contexto y problema
 
 El sistema busca acercar directamente a productores agrícolas y compradores, reduciendo la dependencia de intermediarios que reducen el margen del productor. Cada usuario tiene **un único rol**: productor (publica y vende) o comprador (navega y compra). Los productores publican productos con fotos e información básica; los compradores navegan el catálogo y, desde cada producto, abren un **chat** con el productor para acordar la forma de compra: por plataforma (pago vía pasarela) o por fuera (compartiendo WhatsApp o número de cuenta a través del mismo chat).
 
-### ¿Por qué distribuido y no monolítico?
+### ¿Por qué monolito Stringler Pattern?
 
-Los distintos servicios tienen perfiles de carga, disponibilidad y consistencia muy diferentes:
+Los distintos módulos tienen perfiles de carga, disponibilidad y consistencia muy diferentes, teniendo en cuenta eso,la idea es por medio del Patrón Stringler partir de un sola aplicación e ir extrayendo los distintos módulos que lo necesiten, al punto de llegar a tener microservicios. A continuación la justificación de la separación:
 
 - El **catálogo** necesita alta disponibilidad y tolera lectura ligeramente desactualizada (muchas lecturas, pocas escrituras).
 - La **autenticación** y las **transacciones** necesitan consistencia fuerte (no puede haber ambigüedad sobre si un usuario está autenticado o si un pago quedó confirmado).
 - El **chat** necesita baja latencia y un modelo de datos distinto (mensajes) al resto del sistema.
 - Las **notificaciones** pueden procesarse de forma asíncrona y tolerar fallas temporales sin tumbar el resto del sistema.
 
-Separarlos en servicios independientes permite escalar y fallar de forma aislada, en vez de que un pico de tráfico en catálogo o una caída del servicio de notificaciones afecte la autenticación o las transacciones.
+Iniciamos con un solo deployable, pero organizado y segmentado por módulos.
 
 ## 2. Objetivos y alcance
 
-**General:** Permitir el acercamiento directo entre productor y comprador de productos agrícolas, reduciendo la necesidad de intermediarios.
+**General:** Lograr el desarrollo de las principales funcionalidades del sistema, reduciendo el alcance a una estructura de un monolito modular para el MVP del **corte 1**.
 
 **Específicos:**
 
@@ -60,41 +60,33 @@ Separarlos en servicios independientes permite escalar y fallar de forma aislada
 - **Latencia:** respuestas de catálogo/auth < 1-2s; mensajes de chat con baja latencia (casi tiempo real).
 - **Consistencia:** fuerte en autenticación (estado de sesión) y en transacciones (un pago no puede quedar en estado ambiguo); eventual en notificaciones y mensajes de chat.
 - **Seguridad:** contraseñas hasheadas (bcrypt), autenticación por JWT; credenciales/tokens de la pasarela de pago se manejan solo en el backend (nunca expuestos en el frontend); todo el flujo de pago opera en modo sandbox (sin dinero real).
-- **Escalabilidad:** catálogo y chat deben poder escalar horizontalmente de forma independiente a auth y transacciones.
+
 
 ## 4. Arquitectura preliminar
 
-Servicios: **Auth/Usuarios**, **Catálogo**, **Chat/Mensajería**, **Transacciones** (pagos + ledger interno de dispersión), **Notificaciones**, con un **API Gateway** al frente.
+Monolito Modular: Separación clara entre los dominios de negocio definidos. Se restringe la posibilidad de acoplar servicios, esquemas y repositorios entre servicios.
 
-- Auth, Catálogo y Transacciones se comunican vía REST síncrono con el gateway.
-- Chat se comunica en tiempo casi real (WebSocket) a través del gateway.
-- Transacciones dispara el evento `TransacciónConfirmada` (originado por el webhook de la pasarela cuando la compra es por plataforma) que Notificaciones consume de forma asíncrona vía cola de mensajes.
-- Chat dispara el evento `NuevoMensajeChat` que Notificaciones consume de forma asíncrona.
+Módulos: **Auth/Usuarios**, **Catálogo**, **Chat/Mensajería**, **Transacciones** (pagos + ledger interno de dispersión), **Notificaciones**.
+
+Comunicación: cada módulo expondrá una interfaz que será implementada por los módulos que la necesiten, dicha interfaz tendrá reglas de negocio que proveerán todo lo necesario para los otros módulos. 
+
+
 
 ## 5. Decisiones de diseño clave
 
-- **Comunicación:** REST síncrono para auth/catálogo/transacciones; WebSocket para chat; asíncrono (cola) para los eventos `TransacciónConfirmada` y `NuevoMensajeChat` → notificación.
-- **Modelo de datos:** una única instancia de **PostgreSQL**, con un **schema independiente por servicio** (`auth`, `catalog`, `transactions`, `notifications`) — se prioriza esta separación lógica sobre "database per service" por directriz del curso, dado que esta última requiere infraestructura más avanzada de la que dispone el equipo. El servicio de **Chat/Mensajería** usa **MongoDB** en una instancia aparte: su modelo de datos flexible (documentos) y alto volumen de escritura encajan mejor que un esquema relacional, y al vivir en su propio motor no compite por recursos con el resto de servicios transaccionales.
-- **CAP:** catálogo y chat priorizan disponibilidad; auth y transacciones priorizan consistencia.
-- **Tolerancia a fallos:** si Notificaciones cae, el evento queda en cola y se procesa al recuperarse; catálogo/auth/chat/transacciones siguen funcionando normal.
-  > **Riesgo aceptado:** al compartir una única instancia de PostgreSQL, una caída del motor de base de datos sí afecta simultáneamente a Auth, Catálogo y Transacciones, aunque estén lógicamente separados por schema. Se acepta este riesgo para el alcance del MVP académico (ver sección 7).
+- **Comunicación:** implementación de interfaces con las reglas de negocio necesarias
+- **Modelo de datos:** una única instancia de **PostgreSQL**, con un **schema independiente por módulo** (`auth`, `catalog`, `transactions`, `notifications`) 
+
 
 ## 6. Stack tecnológico
+| Tecnología | Justificación | 
+|----------|-----------------|
+| Java + Spring Boot | Lenguaje fuertemente tipado y framework potente para gestión de transacciones
+| PostgreSQL|  Motor de BD conocida por el equipo y eventual herramienta con potencia para la gestión de microservicios furutos |
+| React + vite | Herramienta conocida por el equipo de desarrollo y práctica  | 
+| Docker | Contenerización de la BD|
 
-| Servicio | Backend | Base de datos |
-|----------|---------|----------------|
-| Auth/Usuarios | Java + Spring Boot | PostgreSQL (schema `auth`) |
-| Catálogo | Java + Spring Boot | PostgreSQL (schema `catalog`) |
-| Transacciones (pagos + ledger de dispersión) | Java + Spring Boot | PostgreSQL (schema `transactions`) |
-| Notificaciones | Java + Spring Boot | PostgreSQL (schema `notifications`) |
-| Chat/Mensajería | **Go** — concurrencia nativa (goroutines/channels) para sostener muchas conexiones de chat simultáneas con bajo overhead | **MongoDB** — modelo de documentos flexible y alta escritura, sin necesidad de joins |
 
-**Frontend:**
-
-| Aplicación | Tecnología | Justificación |
-|------------|-----------|----------------|
-| Marketplace (compradores/productores: catálogo, productos, chat, pagos) | **React** | Cara pública de mayor volumen de usuarios; el equipo tiene más experiencia en React, lo que reduce riesgo en la app más crítica. |
-| Panel administrativo interno | **Angular** | Uso interno, menor volumen de usuarios; estructura "batteries-included" de Angular (routing, forms, DI) encaja bien con CRUDs administrativos y de seguimiento de transacciones/ledger. |
 
 **Infraestructura común:**
 
@@ -105,11 +97,11 @@ Servicios: **Auth/Usuarios**, **Catálogo**, **Chat/Mensajería**, **Transaccion
 
 | Riesgo | Mitigación |
 |--------|------------|
-| Equipo de 2 desarrolladores manteniendo 5 microservicios + gateway + 2 motores de BD + broker | Docker Compose local, alcance acotado, división clara de servicios por desarrollador |
-| Pasarela de pago aún no seleccionada; el sandbox elegido podría no soportar dispersión automática | Ledger interno en el servicio de Transacciones como respaldo para registrar y controlar la dispersión manualmente si es necesario |
+| Equipo de 2 desarrolladores manteniendo 5 modulos +  motor de BD | Docker Compose local, alcance acotado, división clara de servicios por desarrollador |
+| Sandbox elegido podría no soportar dispersión automática | Ledger interno en el servicio de Transacciones como respaldo para registrar y controlar la dispersión manualmente si es necesario |
 | Manejo de flujos de pago en un proyecto académico | Todo el flujo opera en modo sandbox/pruebas — no se mueve dinero real |
 | Compras acordadas por fuera de la plataforma quedan sin protección ni trazabilidad del sistema (riesgo de fraude entre las partes) | Se informa al usuario en el chat que estas negociaciones son bajo su propio riesgo; el sistema no interviene ni las registra |
-| Scope creep hacia verificación de identidad antes de tener el MVP sólido | Fase 2 documentada pero no implementada aún |
+
 
 ## 8. Cronograma
 

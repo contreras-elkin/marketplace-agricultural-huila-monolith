@@ -2,6 +2,13 @@ import { useState, type FormEvent } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ApiError } from '../api/client';
 import { useAuth } from '../auth/AuthContext';
+import { Wordmark } from '../components/Wordmark';
+import { Alert } from '../ui/Alert';
+import { Button } from '../ui/Button';
+import { Card } from '../ui/Card';
+import { Field } from '../ui/Field';
+import { PageHeader } from '../ui/PageHeader';
+import styles from './authShell.module.css';
 
 export function LoginPage() {
   const navigate = useNavigate();
@@ -26,25 +33,42 @@ export function LoginPage() {
   }
 
   return (
-    <main>
-      <h1>Iniciar sesión</h1>
-      <form onSubmit={handleSubmit}>
-        <label>
-          Correo
-          <input type="email" value={email} onChange={(e) => setEmail(e.target.value)} required />
-        </label>
-        <label>
-          Contraseña
-          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} required />
-        </label>
-        {error && <p role="alert">{error}</p>}
-        <button type="submit" disabled={submitting}>
-          {submitting ? 'Ingresando...' : 'Ingresar'}
-        </button>
-      </form>
-      <p>
+    <div className={styles.wrap}>
+      <Link to="/" aria-label="Ir al inicio">
+        <Wordmark size="lg" />
+      </Link>
+
+      <Card className={styles.card}>
+        <PageHeader title="Ingresar" />
+        <form className={styles.form} onSubmit={handleSubmit}>
+          <Field label="Correo" required>
+            <input
+              type="email"
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              autoComplete="email"
+              required
+            />
+          </Field>
+          <Field label="Contraseña" required>
+            <input
+              type="password"
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              autoComplete="current-password"
+              required
+            />
+          </Field>
+          {error && <Alert variant="error">{error}</Alert>}
+          <Button type="submit" block loading={submitting}>
+            {submitting ? 'Ingresando…' : 'Ingresar'}
+          </Button>
+        </form>
+      </Card>
+
+      <p className={styles.foot}>
         ¿No tenés cuenta? <Link to="/register">Registrate</Link>
       </p>
-    </main>
+    </div>
   );
 }

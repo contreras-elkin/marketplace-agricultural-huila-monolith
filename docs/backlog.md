@@ -149,17 +149,86 @@ es el único módulo que **no expone `ModuleApi`**: solo reacciona a eventos.
 - **`NotificationType`** es interno de `notifications/domain` (ningún otro módulo lo consume). `notifications` no expone `ModuleApi`.
 - **`SecurityConfig`, `pom.xml` y los otros módulos no se tocaron** — módulo consumidor puro.
 
+## Épica 6 — Rediseño de UI / Sistema de diseño del frontend ✅ Completada
+
+Primera épica **puramente de frontend**. La fase 1 quedó funcional pero con el frontend
+rezagado a propósito (una capa delgada por épica para acoplar contra el backend): HTML sin
+sistema de estilos, sin shell, con estados y formatos ad-hoc y divergentes entre vistas.
+Esta épica lo lleva a una interfaz profesional y **consistente entre todas las vistas**,
+**sin agregar ni cambiar funcionalidad**. Diseño detallado en [`docs/claude/epica-6-spec.md`](claude/epica-6-spec.md).
+
+**No depende de** ningún cambio de backend: consume las APIs REST y el WebSocket STOMP ya
+existentes (Épicas 1–5) sin tocar un solo contrato.
+
+**Alcance:**
+1. Sistema de diseño: tokens CSS (paleta verde-agro, tipografía del sistema, espaciado,
+   radios, sombras), reset, tema **solo claro**.
+2. Componentes presentacionales reutilizables en `src/ui/` (Button, Field, Card, Badge,
+   Alert, Spinner/LoadingBlock, Skeleton, EmptyState, PageHeader, Breadcrumbs, ConfirmDialog,
+   sistema de toasts).
+3. Shell: `<Layout>` con header (nav por rol + campana + menú de usuario), footer (proyecto +
+   estado del backend) y breadcrumbs; página 404.
+4. Helpers de formato unificados en `src/lib/format.ts` — dinero (`$ 1.234.567`, sufijo `COP`
+   en totales), fechas (relativas en listas, absolutas en detalle, es-CO / America/Bogota),
+   cantidad + unidad.
+5. Rediseño de las 13 páginas + la home reusando esos componentes y formatos; estados
+   loading/error/empty unificados; toasts para confirmaciones; skeletons en listas y grilla.
+6. `lucide-react` como **única dependencia nueva** del frontend.
+
+**Fuera de alcance:** cualquier funcionalidad o cambio de comportamiento; tocar `src/api/`,
+contratos de datos o `backend/`; cambiar rutas de negocio; tema oscuro; i18n; persistencia
+del JWT; panel admin Angular.
+
+**Criterio de salida:** `npm run lint` y `npm run build` (tsc) en verde; recorrido en Chrome
+de las 14 vistas con **paridad funcional 1:1** con el estado previo (registro, login, CRUD
+de productos, catálogo + filtros, chat en vivo, forma de compra, pago Stripe sandbox, estado
+de transacción, ventas, notificaciones), ahora con el sistema de diseño aplicado de forma
+consistente; `git diff` sin cambios en `src/api/` ni `backend/`; `mvn test` sigue verde;
+screenshots de cada vista.
+
+**Implementación en 5 cortes verificables** (fundación → alto tráfico → núcleo app →
+productor/transacciones → remate) por la entrega ajustada; ver el spec.
+
+**Decisiones tomadas** (25 de alcance + 8 de detalle `D-A`…`D-H`, todas = recomendación; ver
+`docs/claude/epica-6-spec.md`):
+- **Enfoque:** CSS plano + design tokens (`:root`) + componentes en `src/ui/` con CSS Modules.
+  **Sin** Tailwind, sin librería de componentes, sin runtime CSS-in-JS. Única dependencia nueva:
+  `lucide-react` (íconos). Descartado Tailwind (mete utilidades en todo el JSX de un código que
+  no tenía ninguna) y una librería de componentes (sobre-ingeniería, cambia el look completo).
+- **Tema:** solo claro, paleta verde-agro (primario `#2e7d32`). Se eliminó `color-scheme:
+  light dark` (hacía que la app se viera distinta según el SO de cada quien).
+- **Formato único** en `src/lib/format.ts` (dinero `$ 1.234.567` / sufijo `COP` en totales;
+  fechas relativas en listas, absolutas en detalle, es-CO/`America/Bogota`; cantidad+unidad).
+  `formatMoney` se movió acá; `transactions/types.ts` lo re-exporta. Los mapas `*_LABELS`
+  quedaron cada uno en su `<módulo>/types.ts` (`D-A`) — la consistencia la da `<Badge>`.
+- **Shell:** `<Layout>` como ruta padre (header con nav por rol + campana + menú de usuario,
+  footer con estado del backend, breadcrumbs por página). Página 404. El `Home` inline pasó a
+  `pages/HomePage.tsx` (hero para visitante / panel de accesos por rol).
+- **Toasts** propios (`ToastProvider` + `useToast`), sin dependencia. **`ConfirmDialog`** sobre
+  `<dialog>` nativo para el borrado de producto (`D-B`, reemplaza `window.confirm`).
+- **Responsive:** desktop-first, un único breakpoint 768px (demo en laptop). Header hace wrap
+  simple en móvil (`D-D`); `ProducerSalesPage` es `<table>` que colapsa a tarjetas (`D-H`).
+- **Alcance respetado:** cero cambios en `src/api/`, contratos de datos, rutas de negocio,
+  comportamiento ni `backend/`. `npm run lint` (queda 1 warning preexistente ajeno a la épica) y
+  `npm run build` (tsc) verdes. Verificado en navegador todas las vistas, desktop + 375px.
+- **No re-verificado end-to-end** (necesita `stripe listen`, lógica intacta): redirect del
+  bloque de pago, polling de `TransactionStatusPage` con datos, tabla de `ProducerSalesPage`
+  con filas. Sus estados de carga/vacío sí se verificaron.
+
 ## Fuera de esta fase (no planificar todavía)
 
 - Extracción real a microservicios (Strangler Fig) — solo aplica cuando el monolito ya funciona de punta a punta.
 - Panel administrativo en Angular — es una app interna aparte (menor prioridad que el marketplace React); se planifica una vez el marketplace esté completo, no bloquea ninguna épica de arriba.
-- Pulido visual/UX del frontend más allá de lo funcional — cada épica entrega frontend funcional, no diseño final.
+- Iteración de UX / diseño más allá de la Épica 6 — la Épica 6 deja un sistema de diseño consistente y profesional; rediseños posteriores, pruebas de usabilidad y pulido fino de interacción quedan para después.
 - Todo lo que el PDR marca como fuera de alcance del MVP (§2): reputación, seguimiento de compras fuera de plataforma, verificación de identidad, logística, geolocalización con mapa, selección definitiva de pasarela de producción.
 
 ## Resumen de orden
 
 ```
 Épica 0 (base) → Épica 1 (auth) → Épica 2 (catálogo) → Épica 3 (chat) → Épica 4 (transacciones) → Épica 5 (notificaciones)
+   → Épica 6 (rediseño de UI · solo frontend, sin cambios de backend)
 ```
 
-Cada épica es demostrable de punta a punta antes de empezar la siguiente — evita construir sobre supuestos no probados de un módulo que aún no existe.
+Las Épicas 0–5 son cada una demostrable de punta a punta antes de empezar la siguiente —
+evita construir sobre supuestos no probados de un módulo que aún no existe. La Épica 6 es
+transversal al frontend ya construido: no introduce módulos ni endpoints, solo presentación.

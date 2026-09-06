@@ -5,7 +5,7 @@
 > si algo aquí contradice el código, gana el código y hay que corregir este archivo.
 > Para el *porqué* de cada decisión, ver [`backlog.md`](../backlog.md) y [`architecture.md`](../architecture.md).
 >
-> **Última actualización:** 2026-09-02 · **Épica en curso:** ninguna — Épicas 0-5 completas (fase 1 del monolito terminada; siguen extracción a microservicios y panel admin Angular, ambos fuera de esta fase)
+> **Última actualización:** 2026-09-02 · **Épica en curso:** ninguna — Épicas 0-6 completas. Épica 6 (rediseño de UI, solo frontend) **sin commitear** (working tree); spec en [`epica-6-spec.md`](epica-6-spec.md).
 
 ## Progreso por épica
 
@@ -16,15 +16,19 @@
 | 2 — Catálogo (RF3, RF4) | ✅ completa, verificada end-to-end | commiteada (`144eb6e`) |
 | 3 — Chat (RF5, RF6) | ✅ completa, verificada end-to-end | commiteada (`e33628c`) |
 | 4 — Transacciones (RF7, RF8) | ✅ completa, verificada end-to-end (Stripe sandbox) | commiteada (`da93063`) |
-| 5 — Notificaciones (RF9) | ✅ completa, verificada end-to-end (chat + pago Stripe) | **sin commitear (working tree)** |
+| 5 — Notificaciones (RF9) | ✅ completa, verificada end-to-end (chat + pago Stripe) | commiteada (`58e7b26`) |
+| 6 — Rediseño de UI (solo frontend) | ✅ completa, verificada en navegador (todas las vistas, desktop + móvil); `lint` + `build` verdes | **sin commitear (working tree)** |
 
-⚠️ **Toda la Épica 5 está en el working tree sin commitear:** módulo `notifications/` completo
-(`domain/{Notification,NotificationType}`, `application/{NotificationEventListener,NotificationService,
-NotificationsAsyncConfig}`, `infrastructure/NotificationRepository`, `web/NotificationController` + 3 DTOs),
-`db/migration/notifications/V502__create_notifications_tables.sql`, `notifications/{api,types}.ts`,
-`components/NotificationsBell.tsx` y `pages/NotificationsPage.tsx` en el frontend, más `App.tsx`
-(ruta `/notificaciones` + badge/link en `Home`). **Sin cambios** en `shared`, `SecurityConfig`,
-`pom.xml` ni otros módulos — `notifications` es consumidor puro. Pendiente de commit por épica.
+⚠️ **Toda la Épica 6 está en el working tree sin commitear** (solo `frontend/` + docs): nuevo
+sistema de diseño (`src/index.css` reescrito con tokens, `src/styles/utils.css`, `src/lib/`
+[`format.ts`, `initials.ts`], `src/ui/` con ~17 componentes + CSS Modules, `src/ui/toast/`),
+shell (`src/components/` `Layout`, `AppHeader`, `AppFooter`, `BackendStatus`, `Wordmark` +
+`NotificationsBell` reestilado), `src/pages/` (13 páginas reescritas visualmente + `HomePage`
+extraída de `App.tsx` + `NotFoundPage`), `App.tsx` (ruta `<Layout>` + `*`), `main.tsx`
+(`ToastProvider`), `index.html` (`lang="es"`), `public/favicon.svg`, `package.json`
+(`lucide-react`). **Sin cambios** en `src/api/`, `src/*/api.ts`, `src/chat/ws.ts`,
+`src/auth/AuthContext.tsx` ni en `backend/` — `formatMoney` se movió a `src/lib/format.ts` y
+`transactions/types.ts` lo re-exporta. Ver `docs/claude/epica-6-spec.md`.
 
 ## Stack y layout
 
@@ -241,6 +245,48 @@ NotificationsAsyncConfig}`, `infrastructure/NotificationRepository`, `web/Notifi
 
 ## Frontend — qué existe
 
+### Sistema de diseño (Épica 6) — todas las vistas lo usan
+
+- **Tokens + reset**: `src/index.css` reescrito — `:root` con paleta verde-agro
+  (`--color-primary #2e7d32`), neutrales, semánticos (success/warning/danger/info, par
+  texto/fondo), tipografía del sistema, escalas de espaciado/radio/sombra, `--container-max`
+  `--header-h`. Tema **solo claro** (`color-scheme: light`). `src/styles/utils.css` = 6
+  utilidades globales (`.container`, `.stack`, `.cluster`, `.row`, `.muted`, `.visually-hidden`).
+- **`src/lib/format.ts`** — único lugar de formato: `formatMoney(n, {suffix})` (`$ 1.234.567`,
+  sufijo ` COP` en totales), `formatDate` / `formatDateTime` / `formatTime` / `formatRelative`
+  (es-CO, `America/Bogota`; relativo = "recién / hace N min / ayer / 12 sept…"),
+  `formatQuantity(qty, unit, {long})`. `src/lib/initials.ts` para avatares.
+  `transactions/types.ts` **re-exporta** `formatMoney` desde acá (compat de imports).
+- **`src/ui/`** — componentes presentacionales con CSS Modules co-locados: `Button`
+  (variantes primary/secondary/danger/ghost, `loading`), `ButtonLink`, `IconButton`, `Field`
+  (label+hint+error, asocia por id + `aria-invalid`), `Card` (`interactive`, `padding`),
+  `Badge` (success/warning/danger/info/neutral/outline + `dot`), `Alert` (error/warning/info/
+  success, `role="alert"`), `Spinner`, `LoadingBlock`, `Skeleton{Line,Card,Grid}`, `EmptyState`,
+  `PageHeader` (título+subtítulo+acciones), `Breadcrumbs`, `Avatar`, `ConfirmDialog` (`<dialog>`
+  nativo), `cx()`. `src/ui/index.ts` es barrel (sin `cx`). Íconos: **`lucide-react`** (única
+  dependencia nueva del frontend).
+- **Toasts**: `src/ui/toast/` — `ToastProvider` (en `main.tsx`, dentro de `AuthProvider`) +
+  `useToast()` → `{ success, error, info }`, cola arriba-derecha, auto-dismiss ~4 s,
+  `aria-live`. Se usa en registro, alta/edición/borrado/estado de producto, perfil de finca.
+- **Shell** — `src/components/`: `Layout` (ruta padre en `App.tsx`: `<AppHeader/>` +
+  `<main class="container">` con `<Outlet/>` + `<AppFooter/>`), `AppHeader` (wordmark, nav por
+  rol con `NavLink` activo, `<NotificationsBell/>`, menú de usuario con "Perfil de finca"
+  [productor] + "Cerrar sesión"; en <768px la nav baja a una 2ª fila), `AppFooter`
+  (proyecto/materia + `<BackendStatus/>`), `BackendStatus` (el fetch a `/health` que vivía en
+  `Home`), `Wordmark` (brote `Sprout` + texto). `NotificationsBell` ahora usa el ícono `Bell`
+  de lucide + badge numérico (misma lógica de polling 20 s).
+- **Responsive**: desktop-first, un único `@media (max-width: 768px)`. `ProducerSalesPage`
+  usa `<table>` que colapsa a tarjetas (data-label) en móvil.
+- **Verificación (criterio de salida)**: `cd frontend && npm run lint` (oxlint) — solo queda
+  1 warning preexistente en `auth/AuthContext.tsx`; `npm run build` (`tsc -b && vite build`)
+  verde; recorrido en navegador de todas las vistas (registro→login→CRUD producto→catálogo→
+  detalle→chat en vivo con burbujas→conversaciones→notificaciones→perfil→ventas→404), desktop
+  y 375px. **No** re-verificado end-to-end con `stripe listen`: el redirect del bloque de pago,
+  el polling de `TransactionStatusPage` con datos reales y `ProducerSalesPage` con filas — su
+  lógica no se tocó, solo el contenedor visual.
+
+### Infra del frontend (sin cambios de Épica 6)
+
 - `api/client.ts` — wrapper `fetch`: `apiGet/apiPost/apiPut/apiDelete` (token opcional),
   `apiUpload` (multipart, deja el `Content-Type` al browser), `mediaUrl(path)` (antepone
   `VITE_API_BASE_URL` a rutas `/media/...`), `wsUrl(path='/ws')` (deriva `ws://…` de la base
@@ -258,10 +304,10 @@ NotificationsAsyncConfig}`, `infrastructure/NotificationRepository`, `web/Notifi
   `markNotificationRead(id, token)`, `markAllNotificationsRead(token)`; tipo `AppNotification`
   (así llamado para no chocar con el `Notification` global del DOM), `TYPE_LABELS`.
 - `components/ProtectedRoute.tsx` — redirige a `/login` sin sesión, o fuera de la ruta si el
-  `role` no coincide (`role` opcional).
-- `components/NotificationsBell.tsx` (Épica 5) — 🔔 con badge de no leídas; hace
-  `listNotifications` al montar y cada 20 s (polling — el criterio de salida tolera unos
-  segundos de desfase). Errores silenciosos. Se renderiza en `Home` (rama autenticada).
+  `role` no coincide (`role` opcional). Sin cambios de lógica en Épica 6.
+- `components/NotificationsBell.tsx` (Épica 5, reestilado en Épica 6) — ícono `Bell` de lucide
+  con badge de no leídas; hace `listNotifications` al montar y cada 20 s (polling). Errores
+  silenciosos. Ahora se renderiza en `AppHeader` (rama autenticada), no en `Home`.
 - `pages/`: `RegisterPage`, `LoginPage`, `FarmProfilePage` (Épica 1); `CatalogPage`
   (`/catalogo`, pública), `ProductDetailPage` (`/productos/:id`, pública — **botón "Chatear"
   activo para `BUYER` con producto `ACTIVE` y ajeno → `POST /api/chat/conversations` y navega
@@ -281,10 +327,12 @@ NotificationsAsyncConfig}`, `infrastructure/NotificationRepository`, `web/Notifi
   lista de `listNotifications`; no leídas con acento de borde izquierdo azul + ●, orden
   reciente-primero; clic en una notif → `markNotificationRead` y navega a su `link`; botón
   "marcar todas como leídas".
-- `App.tsx` define `<Routes>` (suma `/transacciones/:id`, `/mis-ventas` y `/notificaciones`);
-  `Home` suma el link "Mis ventas" para productores y, para cualquier sesión, `<NotificationsBell/>`
-  + link "Notificaciones". `main.tsx` = `BrowserRouter` + `AuthProvider`. `package.json` **no**
-  suma nada en Épicas 4 ni 5. `.env`: `VITE_API_BASE_URL=http://localhost:8080`.
+- `App.tsx` (Épica 6) define `<Routes>` con una **ruta padre `<Route element={<Layout/>}>`** que
+  envuelve todas las rutas (mismas paths, mismos `ProtectedRoute`) + `<Route path="*">`
+  (`NotFoundPage`). El antiguo `Home` inline se extrajo a `pages/HomePage.tsx` (hero para
+  visitante / panel de accesos por rol para logueado; el indicador `/health` se movió al footer).
+  `main.tsx` = `BrowserRouter` → `AuthProvider` → `ToastProvider` → `App`. `.env`:
+  `VITE_API_BASE_URL=http://localhost:8080`. `package.json` suma **`lucide-react`** (Épica 6).
 
 ## Datos y migraciones
 
