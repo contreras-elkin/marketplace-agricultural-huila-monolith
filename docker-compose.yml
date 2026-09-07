@@ -1,3 +1,10 @@
+# Stack completo en Docker (Opción B: nginx como reverse-proxy, front y back en un
+# mismo origen). Variables sensibles / de entorno: copiá `.env.example` a `.env`.
+#
+#   docker compose up -d --build      # levanta todo; el navegador entra por PUBLIC_BASE_URL
+#   docker compose down               # baja (conserva volúmenes)
+#   docker compose down -v            # baja y borra datos (BD, uploads, RabbitMQ)
+
 services:
   postgres:
     image: postgres:16
@@ -10,6 +17,11 @@ services:
       - "5432:5432"
     volumes:
       - postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U marketplace -d marketplace"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -22,7 +34,54 @@ services:
       - "15672:15672"
     volumes:
       - rabbitmq_data:/var/lib/rabbitmq
+    # Infra de mensajería del PDR. El código de fase 1 todavía NO la usa (el chat
+    # corre sobre un broker STOMP en memoria y los eventos de dominio son
+    # ApplicationEventPublisher en proceso). Se deja levantada porque el flujo
+    # asíncrono se externaliza a RabbitMQ recién en la extracción a microservicios.
+
+  backend:
+    build:
+      context: ./backend
+    image: marketplace-backend
+    container_name: marketplace-backend
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/marketplace
+      SPRING_DATASOURCE_USERNAME: marketplace
+      SPRING_DATASOURCE_PASSWORD: marketplace
+      JWT_SECRET: ${JWT_SECRET:-dev-only-secret-change-me-marketplace-huila-32bytes+}
+      UPLOADS_DIR: /app/uploads
+      # Origen público desde el que el navegador abre la app (lo sirve `frontend`).
+      # Debe coincidir EXACTO con la barra de direcciones — usá localhost, no 127.0.0.1.
+      APP_CORS_ALLOWED_ORIGIN: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      TRANSACTIONS_FRONTEND_URL: ${PUBLIC_BASE_URL:-http://localhost:8080}
+      # Stripe test mode (Épica 4). Con los placeholders el contexto arranca, pero
+      # POST /api/transactions da 502 al llamar a Stripe. Claves reales por `.env`.
+      STRIPE_SECRET_KEY: ${STRIPE_SECRET_KEY:-sk_test_placeholder}
+      STRIPE_WEBHOOK_SECRET: ${STRIPE_WEBHOOK_SECRET:-whsec_placeholder}
+    volumes:
+      - backend_uploads:/app/uploads
+    ports:
+      # Acceso directo al backend para depurar (curl/Postman). El navegador NO lo usa.
+      - "8081:8080"
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        # Vacío: llamadas relativas al mismo origen; nginx hace de reverse-proxy.
+        VITE_API_BASE_URL: ""
+    image: marketplace-frontend
+    container_name: marketplace-frontend
+    depends_on:
+      backend:
+        condition: service_healthy
+    ports:
+      - "8080:80"
 
 volumes:
   postgres_data:
   rabbitmq_data:
+  backend_uploads:

@@ -89,8 +89,9 @@ código existente.
 ## Comandos
 
 ```bash
-docker compose up -d                       # infra (Postgres 16 + RabbitMQ) — desde la raíz
-docker compose down -v && docker compose up -d   # resetear la BD desde cero
+docker compose up -d --build               # stack completo dockerizado → http://localhost:8080 (ver docs/claude/estado-actual.md §Despliegue)
+docker compose up -d postgres rabbitmq     # solo la infra (para correr back/front en local)
+docker compose down -v && docker compose up -d postgres rabbitmq   # resetear la BD desde cero
 
 cd backend && mvn spring-boot:run          # backend → http://localhost:8080 (health: /health)
 cd backend && mvn test                     # tests, incluye ArchitectureTests (límites de módulo)

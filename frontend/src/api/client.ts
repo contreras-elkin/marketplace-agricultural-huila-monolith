@@ -1,4 +1,7 @@
-const API_BASE_URL = import.meta.env.VITE_API_BASE_URL as string;
+// Con valor (`http://localhost:8080` en dev): el backend vive en otro host/puerto.
+// Vacío (deploy tras un reverse-proxy que sirve front y back en el mismo origen):
+// todas las llamadas van relativas a la página.
+const API_BASE_URL = (import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '';
 
 export class ApiError extends Error {
   status: number;
@@ -82,7 +85,16 @@ export function mediaUrl(path: string | null | undefined): string | undefined {
   return `${API_BASE_URL}${path}`;
 }
 
-/** URL del endpoint WebSocket a partir de la base HTTP del backend (`http` → `ws`, `https` → `wss`). */
+/**
+ * URL absoluta del endpoint WebSocket. Con `VITE_API_BASE_URL` seteada, deriva
+ * `ws(s)://` de esa base (`http` → `ws`, `https` → `wss`). Con la base vacía
+ * (deploy tras reverse-proxy, mismo origen que la página) la deriva de
+ * `window.location` — `@stomp/stompjs` exige una URL absoluta en `brokerURL`.
+ */
 export function wsUrl(path = '/ws'): string {
-  return `${API_BASE_URL.replace(/^http/, 'ws')}${path}`;
+  if (API_BASE_URL) {
+    return `${API_BASE_URL.replace(/^http/, 'ws')}${path}`;
+  }
+  const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+  return `${wsProtocol}//${window.location.host}${path}`;
 }

@@ -5,7 +5,9 @@
 > si algo aquí contradice el código, gana el código y hay que corregir este archivo.
 > Para el *porqué* de cada decisión, ver [`backlog.md`](../backlog.md) y [`architecture.md`](../architecture.md).
 >
-> **Última actualización:** 2026-09-02 · **Épica en curso:** ninguna — Épicas 0-6 completas. Épica 6 (rediseño de UI, solo frontend) **sin commitear** (working tree); spec en [`epica-6-spec.md`](epica-6-spec.md).
+> **Última actualización:** 2026-09-06 · **Épica en curso:** ninguna — Épicas 0-6 completas y commiteadas.
+> Añadido el **despliegue full-Docker** (Opción B: `nginx` como reverse-proxy, front y back en un mismo
+> origen). Ver [§Despliegue con Docker](#despliegue-con-docker).
 
 ## Progreso por épica
 
@@ -17,23 +19,29 @@
 | 3 — Chat (RF5, RF6) | ✅ completa, verificada end-to-end | commiteada (`e33628c`) |
 | 4 — Transacciones (RF7, RF8) | ✅ completa, verificada end-to-end (Stripe sandbox) | commiteada (`da93063`) |
 | 5 — Notificaciones (RF9) | ✅ completa, verificada end-to-end (chat + pago Stripe) | commiteada (`58e7b26`) |
-| 6 — Rediseño de UI (solo frontend) | ✅ completa, verificada en navegador (todas las vistas, desktop + móvil); `lint` + `build` verdes | **sin commitear (working tree)** |
+| 6 — Rediseño de UI (solo frontend) | ✅ completa, verificada en navegador (todas las vistas, desktop + móvil); `lint` + `build` verdes | commiteada (`4834c6c`) |
 
-⚠️ **Toda la Épica 6 está en el working tree sin commitear** (solo `frontend/` + docs): nuevo
-sistema de diseño (`src/index.css` reescrito con tokens, `src/styles/utils.css`, `src/lib/`
-[`format.ts`, `initials.ts`], `src/ui/` con ~17 componentes + CSS Modules, `src/ui/toast/`),
-shell (`src/components/` `Layout`, `AppHeader`, `AppFooter`, `BackendStatus`, `Wordmark` +
-`NotificationsBell` reestilado), `src/pages/` (13 páginas reescritas visualmente + `HomePage`
-extraída de `App.tsx` + `NotFoundPage`), `App.tsx` (ruta `<Layout>` + `*`), `main.tsx`
-(`ToastProvider`), `index.html` (`lang="es"`), `public/favicon.svg`, `package.json`
-(`lucide-react`). **Sin cambios** en `src/api/`, `src/*/api.ts`, `src/chat/ws.ts`,
-`src/auth/AuthContext.tsx` ni en `backend/` — `formatMoney` se movió a `src/lib/format.ts` y
-`transactions/types.ts` lo re-exporta. Ver `docs/claude/epica-6-spec.md`.
+La Épica 6 quedó commiteada en `4834c6c`: nuevo sistema de diseño (`src/index.css` reescrito con
+tokens, `src/styles/utils.css`, `src/lib/` [`format.ts`, `initials.ts`], `src/ui/` con ~17
+componentes + CSS Modules, `src/ui/toast/`), shell (`src/components/` `Layout`, `AppHeader`,
+`AppFooter`, `BackendStatus`, `Wordmark` + `NotificationsBell` reestilado), `src/pages/` (13
+páginas reescritas visualmente + `HomePage` extraída de `App.tsx` + `NotFoundPage`), `App.tsx`
+(ruta `<Layout>` + `*`), `main.tsx` (`ToastProvider`), `index.html` (`lang="es"`),
+`public/favicon.svg`, `package.json` (`lucide-react`). No tocó `backend/`. Ver
+`docs/claude/epica-6-spec.md`.
+
+Después de la Épica 6, el **único cambio de frontend** para el despliegue Docker: `wsUrl()` en
+`src/api/client.ts` ahora deriva la URL del WebSocket de `window.location` cuando
+`VITE_API_BASE_URL` va vacía (mismo origen tras el reverse-proxy); con la variable seteada se
+comporta igual que antes. `API_BASE_URL` cae a `''` (llamadas relativas) si la variable no está.
 
 ## Stack y layout
 
 - `backend/` (Spring Boot) y `frontend/` (React+Vite) son carpetas hermanas; `docker-compose.yml`
-  (Postgres 16 + RabbitMQ 3-management) en la raíz.
+  en la raíz levanta **todo el stack**: `postgres` + `rabbitmq` + `backend` (imagen propia,
+  `backend/Dockerfile`) + `frontend` (`nginx` sirviendo el build + reverse-proxy,
+  `frontend/Dockerfile` + `frontend/nginx.conf`). Para correr solo la infra y el resto local,
+  `docker compose up -d postgres rabbitmq`.
 - Backend: **un solo** proyecto Maven, Java 21, Spring Boot 4.1.1, `groupId=com.huila`,
   `artifactId=marketplace`, paquete raíz `com.huila.marketplace`. Paquete por módulo +
   `shared/`. spring-modulith 2.1.1.
@@ -357,17 +365,56 @@ Stripe **no** van en git — el `application.yml` versionado solo tiene placehol
 **único test** del proyecto: no hay tests unitarios de módulos — la verificación de cada épica
 es ArchitectureTests + prueba end-to-end en navegador/curl (el "Criterio de salida" del backlog).
 
-## Cómo correr y probar
+## Despliegue con Docker
+
+**Opción B — un solo origen.** `nginx` (contenedor `frontend`) sirve el build estático de Vite
+y hace de reverse-proxy al `backend`: el navegador ve una sola dirección (`PUBLIC_BASE_URL`,
+por defecto `http://localhost:8080`), así **no hay CORS** entre front y back y el WebSocket del
+chat viaja por la misma puerta.
+
+Artefactos: `backend/Dockerfile` (multi-stage Maven→JRE 21, `HEALTHCHECK` a `/health`),
+`backend/.dockerignore`, `frontend/Dockerfile` (Node build→`nginx:alpine`), `frontend/.dockerignore`,
+`frontend/nginx.conf` (SPA fallback + proxy `/api` `/media` `/health` `/ws`, `client_max_body_size 10m`
+para las fotos de 5 MB), `docker-compose.yml` extendido y `.env.example` (raíz).
+
+Config que cambió para que sea parametrizable (defaults intactos para `mvn spring-boot:run`):
+- `application.yml`: `spring.datasource.{url,username,password}` ahora son
+  `${SPRING_DATASOURCE_*:<default local>}`; `app.cors.allowed-origin` es `${APP_CORS_ALLOWED_ORIGIN:http://localhost:5173}`.
+- `frontend/src/api/client.ts`: `API_BASE_URL` cae a `''` si no hay `VITE_API_BASE_URL`;
+  `wsUrl()` deriva `ws(s)://` de `window.location` cuando la base va vacía.
+- El contenedor `backend` recibe por env: `SPRING_DATASOURCE_URL=jdbc:postgresql://postgres:5432/marketplace`,
+  `APP_CORS_ALLOWED_ORIGIN` y `TRANSACTIONS_FRONTEND_URL` = `PUBLIC_BASE_URL`, `UPLOADS_DIR=/app/uploads`
+  (volumen `backend_uploads`), `JWT_SECRET`, `STRIPE_SECRET_KEY`, `STRIPE_WEBHOOK_SECRET`.
+- El contenedor `frontend` se buildea con `--build-arg VITE_API_BASE_URL=""`.
+
+`rabbitmq` sigue en el compose pero el código **no lo usa** todavía (chat = broker STOMP en
+memoria; eventos = `ApplicationEventPublisher` en proceso). Está para la narrativa del PDR y la
+futura extracción.
 
 ```bash
-docker compose up -d                               # infra (raíz)
-docker compose down -v && docker compose up -d     # resetear BD desde cero
+cp .env.example .env                               # completar JWT_SECRET y claves Stripe
+docker compose up -d --build                       # todo el stack → http://localhost:8080
+docker compose logs -f backend                     # ver arranque + migraciones Flyway
+docker compose down                                # baja (conserva datos)
+docker compose down -v                             # baja y borra BD + uploads + RabbitMQ
+```
+
+Stripe (Épica 4) desde el host: `stripe listen --forward-to localhost:8080/api/transactions/webhook/stripe`
+(pasa por nginx igual). El backend queda además en `http://localhost:8081` para curl/Postman
+(el navegador no lo usa).
+
+## Cómo correr y probar (local, sin dockerizar la app)
+
+```bash
+docker compose up -d postgres rabbitmq            # solo la infra
+docker compose down -v && docker compose up -d postgres rabbitmq   # resetear BD desde cero
 cd backend && mvn spring-boot:run                  # backend → :8080 (/health)
 cd backend && mvn test                             # ArchitectureTests
 cd frontend && npm install && npm run dev          # frontend → :5173
 ```
 
-Puertos: Postgres 5432 · RabbitMQ 5672 / 15672 · backend 8080 · frontend 5173.
+Puertos: Postgres 5432 · RabbitMQ 5672 / 15672 · backend 8080 (8081 en Docker) · frontend 5173
+(dev) / 8080 (Docker).
 Flujo manual: registrar productor y comprador en `/register` → login → el productor publica en
 `/mis-productos` → el comprador navega `/catalogo`, abre `/productos/:id`, toca **"Chatear"** y
 en `/chat/:id` intercambia mensajes en vivo con el productor (otra sesión) y fija la forma de
@@ -393,6 +440,17 @@ reciben "Tu compra/venta fue confirmada" enlazando a `/transacciones/:id`. Los l
 
 ## Gotchas vigentes
 
+- **Docker — origen exacto**: `PUBLIC_BASE_URL` (default `http://localhost:8080`) tiene que
+  coincidir carácter por carácter con lo que ponés en la barra del navegador. Si entrás por
+  `http://127.0.0.1:8080` el `Origin` no matchea el `allowed-origin` del backend y el WebSocket
+  del chat se cae (el REST igual anda porque el navegador no manda `Origin` en same-origin GET).
+- **Docker — claves Stripe**: `backend/config/application.yml` está en `.dockerignore`, así que
+  en Docker las claves **solo** llegan por env (`.env` en la raíz). Con los placeholders el
+  contexto arranca pero `POST /api/transactions` da 502.
+- **Docker — rebuild del frontend**: `VITE_API_BASE_URL` se hornea en `docker compose build`.
+  Si cambiás `PUBLIC_BASE_URL` a otro host/puerto, rebuildeá el `frontend` (`docker compose build frontend`).
+- **Docker — nginx cachea la IP del backend**: si reiniciás solo el contenedor `backend` y toma
+  otra IP, nginx puede seguir apuntando a la vieja hasta un `docker compose restart frontend`.
 - **JWT en `localStorage`** (desde Épica 3): la sesión sobrevive al refresh, pero el token
   puede estar vencido al recargar → la primera llamada da 401 → `auth:expired` limpia la
   sesión y `ProtectedRoute` manda a `/login`.

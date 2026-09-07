@@ -1,0 +1,9 @@
+# El build context es ./backend. Fuera todo lo que no necesita la imagen.
+target/
+# Override local con las claves Stripe reales — en Docker van por variable de entorno.
+config/
+# Fotos subidas en local; en Docker es un volumen nombrado.
+uploads/
+*.log
+.idea/
+*.iml
